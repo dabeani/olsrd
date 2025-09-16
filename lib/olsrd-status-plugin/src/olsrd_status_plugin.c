@@ -4238,7 +4238,7 @@ static int h_status_traceroute(http_request_t *r) {
   }
 
   /* Build minimal JSON response */
-  char outbuf[8192]; size_t outlen = 0;
+  char outbuf[8193]; size_t outlen = 0;
   outbuf[0] = 0;
   #define TAPP(fmt,...) do { int _n = snprintf(outbuf + outlen, sizeof(outbuf) > outlen ? (sizeof(outbuf)-outlen) : 0, fmt, ##__VA_ARGS__); if(_n>0) outlen += (size_t)_n; } while(0)
   TAPP("{");
