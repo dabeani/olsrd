@@ -4,7 +4,6 @@ git pull
 
 ARCH="x86"
 
-# prepare cross compiler (for x86, use native or x86 toolchain)
 export CC=gcc
 export CXX=g++
 export LD=ld

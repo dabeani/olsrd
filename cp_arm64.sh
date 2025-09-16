@@ -1,6 +1,9 @@
 #!/bin/bash
 
-# prepare cross compiler
+git pull
+
+ARCH="arm64"
+
 export CC=aarch64-linux-gnu-gcc
 export CXX=aarch64-linux-gnu-g++
 export LD=aarch64-linux-gnu-ld
@@ -17,29 +20,18 @@ echo "[info] Running build with: $BUILD_VARS"
 
 # Build using run_make helper which handles clean and plugin selection.
 # You can override MAKE_PLUGINS in the environment when cross-building to limit plugins.
-run_make arm64
+run_make $ARCH
 
-# Destination root as requested (absolute path under /olsrd-output/arm64)
-DEST_ROOT="/olsrd-output/arm64"
-
-ensure_dir "$DEST_ROOT/usr/sbin/"
-ensure_dir "$DEST_ROOT/usr/lib/"
-
-# copy main binary
-if [ -f "$REPO_ROOT/olsrd" ]; then
-  echo "[info] copying olsrd -> $DEST_ROOT/usr/sbin/"
-  cp "$REPO_ROOT/olsrd" "$DEST_ROOT/usr/sbin/"
-else
-  echo "[warn] olsrd binary not found at $REPO_ROOT/olsrd"
-fi
+echo "[info] copying olsrd -> /olsrd-output/$ARCH/usr/sbin/"
+cp olsrd /olsrd-output/$ARCH/usr/sbin/
 
 # copy plugin libraries using the shared helper
-copy_matches "$REPO_ROOT/lib/httpinfo/olsrd_*" "$DEST_ROOT/usr/lib"
-copy_matches "$REPO_ROOT/lib/txtinfo/olsrd_*" "$DEST_ROOT/usr/lib"
-copy_matches "$REPO_ROOT/lib/jsoninfo/olsrd_*" "$DEST_ROOT/usr/lib"
-copy_matches "$REPO_ROOT/lib/watchdog/olsrd_*" "$DEST_ROOT/usr/lib"
-copy_matches "$REPO_ROOT/lib/pgraph/olsrd_*" "$DEST_ROOT/usr/lib"
-copy_matches "$REPO_ROOT/lib/netjson/olsrd_*" "$DEST_ROOT/usr/lib"
-copy_matches "$REPO_ROOT/lib/olsrd-status-plugin/build/olsrd_*" "$DEST_ROOT/usr/lib"
+cp lib/httpinfo/olsrd_* /olsrd-output/$ARCH/usr/lib/
+cp lib/txtinfo/olsrd_* /olsrd-output/$ARCH/usr/lib/
+cp lib/jsoninfo/olsrd_* /olsrd-output/$ARCH/usr/lib/
+cp lib/watchdog/olsrd_* /olsrd-output/$ARCH/usr/lib/
+cp lib/pgraph/olsrd_* /olsrd-output/$ARCH/usr/lib/
+cp lib/netjson/olsrd_* /olsrd-output/$ARCH/usr/lib/
+cp lib/olsrd-status-plugin/build/olsrd_* /olsrd-output/$ARCH/usr/lib/
 
-install_web "$DEST_ROOT/usr/share/olsrd-status-plugin/www"
+cp -r /work/olsrd/lib/olsrd-status-plugin/www /olsrd-output/$ARCH/usr/share/www
