@@ -71,12 +71,9 @@ run_make() {
     esac
   fi
 
-  echo "[info] Running make (CPU=${cpu_arg:-default}) ${extra_vars}"
+  make clean_all
 
-  # Clean first - use a shallow clean to avoid entering doc/java sub-makes
-  # which may require host tools (java, gtk, gps) not available in cross-build
-  # (clean_all descends into many subdirectories and can fail).
-  make clean
+  echo "[info] Running make (CPU=${cpu_arg:-default}) ${extra_vars}"
 
   # Allow an override list to avoid building certain plugins during cross-compiles
   if [ -n "$MAKE_PLUGINS" ]; then
