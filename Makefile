@@ -555,6 +555,18 @@ watchdog_install:
 watchdog_uninstall:
 		$(MAKECMDPREFIX)$(MAKECMD) -C lib/watchdog DESTDIR=$(DESTDIR) uninstall
 
+olsrd-status-plugin:
+		$(MAKECMDPREFIX)$(MAKECMD) -C lib/olsrd-status-plugin
+
+olsrd-status-plugin_clean:
+		$(MAKECMDPREFIX)$(MAKECMD) -C lib/olsrd-status-plugin DESTDIR=$(DESTDIR) clean
+
+olsrd-status-plugin_install:
+		$(MAKECMDPREFIX)$(MAKECMD) -C lib/olsrd-status-plugin DESTDIR=$(DESTDIR) install
+
+olsrd-status-plugin_uninstall:
+		$(MAKECMDPREFIX)$(MAKECMD) -C lib/olsrd-status-plugin DESTDIR=$(DESTDIR) uninstall
+
 
 build_all:	all switch libs
 install_all:	install install_libs
