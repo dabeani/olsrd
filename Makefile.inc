@@ -301,10 +301,10 @@ endif
 # If SYSROOT is provided in the environment (e.g., by packaging scripts),
 # append --sysroot to CFLAGS and LDFLAGS so cross-toolchains use the sysroot
 # without overriding preconfigured LDFLAGS (like -shared for plugins).
-ifdef SYSROOT
-	CFLAGS += --sysroot=$(SYSROOT)
-	LDFLAGS += --sysroot=$(SYSROOT)
-endif
+#ifdef SYSROOT
+#	CFLAGS += --sysroot=$(SYSROOT)
+#	LDFLAGS += --sysroot=$(SYSROOT)
+#endif
 
 
 ###################################
