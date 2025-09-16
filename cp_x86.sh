@@ -2,6 +2,8 @@
 
 git pull
 
+ARCH="x86"
+
 # prepare cross compiler (for x86, use native or x86 toolchain)
 export CC=gcc
 export CXX=g++
@@ -19,18 +21,18 @@ echo "[info] Running build with: $BUILD_VARS"
 
 # Build using run_make helper which handles clean and plugin selection.
 # You can override MAKE_PLUGINS in the environment when cross-building to limit plugins.
-run_make x86
+run_make $ARCH
 
-echo "[info] copying olsrd -> /olsrd-output/x86/usr/sbin/"
-cp olsrd /olsrd-output/x86/usr/sbin/
+echo "[info] copying olsrd -> /olsrd-output/$ARCH/usr/sbin/"
+cp olsrd /olsrd-output/$ARCH/usr/sbin/
 
 # copy plugin libraries using the shared helper
-cp lib/httpinfo/olsrd_* /olsrd-output/x86/usr/lib/
-cp lib/txtinfo/olsrd_* /olsrd-output/x86/usr/lib/
-cp lib/jsoninfo/olsrd_* /olsrd-output/x86/usr/lib/
-cp lib/watchdog/olsrd_* /olsrd-output/x86/usr/lib/
-cp lib/pgraph/olsrd_* /olsrd-output/x86/usr/lib/
-cp lib/netjson/olsrd_* /olsrd-output/x86/usr/lib/
-cp lib/olsrd-status-plugin/build/olsrd_* /olsrd-output/x86/usr/lib/
+cp lib/httpinfo/olsrd_* /olsrd-output/$ARCH/usr/lib/
+cp lib/txtinfo/olsrd_* /olsrd-output/$ARCH/usr/lib/
+cp lib/jsoninfo/olsrd_* /olsrd-output/$ARCH/usr/lib/
+cp lib/watchdog/olsrd_* /olsrd-output/$ARCH/usr/lib/
+cp lib/pgraph/olsrd_* /olsrd-output/$ARCH/usr/lib/
+cp lib/netjson/olsrd_* /olsrd-output/$ARCH/usr/lib/
+cp lib/olsrd-status-plugin/build/olsrd_* /olsrd-output/$ARCH/usr/lib/
 
-cp -r /work/olsrd/lib/olsrd-status-plugin/www /olsrd-output/x86/usr/share/www
+cp -r /work/olsrd/lib/olsrd-status-plugin/www /olsrd-output/$ARCH/usr/share/www
