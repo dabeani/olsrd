@@ -4,9 +4,12 @@
 #git pull
 #cd /workspace/olsrd/
 
+#curl https://toolchains.bootlin.com/downloads/releases/toolchains/armv5-eabi/tarballs/armv5-eabi--glibc--stable-2023.11-1.tar.bz2 -o armv5-eabi--glibc--stable-2023.11-1.tar.bz2
+# tar -xjf armv5-eabi--glibc--stable-2023.11-1.tar.bz2 -C /opt
+
 
 # PATH
-export PATH=$PATH:/opt/armv5-eabi--glibc--stable-2024.05-1/bin
+export PATH=$PATH:/opt/armv5-eabi--glibc--stable-2023.11-1/bin
 
 # prepare cross compiler
 export CC=arm-linux-gcc
