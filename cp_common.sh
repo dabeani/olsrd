@@ -66,6 +66,7 @@ run_make() {
     case "$me" in
       *arm64*) cpu_arg=arm64 ;;
       *arm*) cpu_arg=arm ;;
+      *mipsel*) cpu_arg=mipsel ;;
       *x86*) cpu_arg=x86 ;;
       *) cpu_arg="" ;;
     esac

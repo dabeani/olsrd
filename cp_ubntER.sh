@@ -15,7 +15,7 @@ cd "$REPO_ROOT"
 
 source ./cp_common.sh
 
-run_make
+run_make mipsel
 
 echo "[info] copying olsrd -> /olsrd-output/$ARCH/usr/sbin/"
 cp olsrd /olsrd-output/$ARCH/
