@@ -2693,8 +2693,22 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
   char host[256] = ""; gethostname(host, sizeof(host)); host[sizeof(host)-1]=0;
   int olsrd_on=0, olsr2_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
   /* detect whether olsrd / olsrd2 binaries exist on filesystem (best-effort) */
-  int olsrd_exists = (path_exists("/usr/sbin/olsrd") || path_exists("/usr/bin/olsrd") || path_exists("/sbin/olsrd"));
-  int olsr2_exists = (path_exists("/usr/sbin/olsrd2") || path_exists("/usr/bin/olsrd2") || path_exists("/sbin/olsrd2"));
+  /* detect whether olsrd / olsrd2 binaries exist on filesystem (best-effort)
+   * store both a boolean and the first matching path so callers can use the
+   * concrete binary path if desired.
+   */
+  int olsrd_exists = 0;
+  int olsr2_exists = 0;
+  char olsrd_path[256] = "";
+  char olsr2_path[256] = "";
+  const char *olsrd_candidates[] = { "/usr/sbin/olsrd", "/usr/bin/olsrd", "/sbin/olsrd", NULL };
+  const char *olsr2_candidates[] = { "/usr/sbin/olsrd2", "/usr/bin/olsrd2", "/sbin/olsrd2", NULL };
+  for (const char **p = olsrd_candidates; *p; ++p) {
+    if (path_exists(*p)) { strncpy(olsrd_path, *p, sizeof(olsrd_path)-1); olsrd_exists = 1; break; }
+  }
+  for (const char **p = olsr2_candidates; *p; ++p) {
+    if (path_exists(*p)) { strncpy(olsr2_path, *p, sizeof(olsr2_path)-1); olsr2_exists = 1; break; }
+  }
 
   /* autoupdate wizard info */
   const char *au_path = "/etc/cron.daily/autoupdatewizards";
@@ -3581,8 +3595,18 @@ static int h_status_lite(http_request_t *r) {
   }
   /* detect olsrd / olsrd2 (previously skipped in lite) and whether binaries exist */
   int lite_olsr2_on=0, lite_olsrd_on=0; detect_olsr_processes(&lite_olsrd_on,&lite_olsr2_on);
-  int lite_olsrd_exists = (path_exists("/usr/sbin/olsrd") || path_exists("/usr/bin/olsrd") || path_exists("/sbin/olsrd"));
-  int lite_olsr2_exists = (path_exists("/usr/sbin/olsrd2") || path_exists("/usr/bin/olsrd2") || path_exists("/sbin/olsrd2"));
+  int lite_olsrd_exists = 0;
+  int lite_olsr2_exists = 0;
+  char lite_olsrd_path[256] = "";
+  char lite_olsr2_path[256] = "";
+  const char *lite_olsrd_candidates[] = { "/usr/sbin/olsrd", "/usr/bin/olsrd", "/sbin/olsrd", NULL };
+  const char *lite_olsr2_candidates[] = { "/usr/sbin/olsrd2", "/usr/bin/olsrd2", "/sbin/olsrd2", NULL };
+  for (const char **p = lite_olsrd_candidates; *p; ++p) {
+    if (path_exists(*p)) { strncpy(lite_olsrd_path, *p, sizeof(lite_olsrd_path)-1); lite_olsrd_exists = 1; break; }
+  }
+  for (const char **p = lite_olsr2_candidates; *p; ++p) {
+    if (path_exists(*p)) { strncpy(lite_olsr2_path, *p, sizeof(lite_olsr2_path)-1); lite_olsr2_exists = 1; break; }
+  }
   APP_L("\"olsr2_on\":%s,\"olsrd_on\":%s,\"olsrd_exists\":%s,\"olsr2_exists\":%s", lite_olsr2_on?"true":"false", lite_olsrd_on?"true":"false", lite_olsrd_exists?"true":"false", lite_olsr2_exists?"true":"false");
   APP_L("}\n");
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); return 0;

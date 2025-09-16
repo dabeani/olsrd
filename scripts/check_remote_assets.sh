@@ -2,10 +2,6 @@
 set -euo pipefail
 
 LIVE_HOST="193.238.158.74"
-#!/usr/bin/env bash
-set -euo pipefail
-
-LIVE_HOST="193.238.158.74"
 # derive repo root from script location so paths work from anywhere
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WWW_DIR="$REPO_ROOT/lib/olsrd-status-plugin/www"
@@ -61,7 +57,10 @@ OK=()
 for rel in "${UNIQ_ASSETS[@]}"; do
   local_path="$WWW_DIR/$rel"
   remote_url="http://$LIVE_HOST/$rel"
-  tmpfile="$TMPDIR/$(basename "$rel")"
+  # create a safe unique tmp filename based on the relative path to avoid collisions
+  # replace '/' and spaces with '__'
+  safe_name="$(printf '%s' "$rel" | tr '/ ' '__')"
+  tmpfile="$TMPDIR/$safe_name"
 
   echo -n "- Fetching $remote_url ... "
   if curl -sfL --max-time 15 -o "$tmpfile" "$remote_url"; then
@@ -118,4 +117,4 @@ fi
 
 echo "All compared assets are identical to the remote copies."
 exit 0
-    echo
+exit 0
