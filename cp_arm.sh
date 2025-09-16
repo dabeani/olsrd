@@ -1,8 +1,6 @@
 #!/bin/bash
 
-#cd /workspace/olsrd/lib/olsrd-status-plugin/
-#git pull
-#cd /workspace/olsrd/
+git pull
 
 # PATH
 export PATH=$PATH:/opt/armv5-eabi--glibc--bleeding-edge-2023.08-1/bin

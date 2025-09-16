@@ -1,5 +1,7 @@
 #!/bin/bash
 
+git pull
+
 # prepare cross compiler (for x86, use native or x86 toolchain)
 export CC=gcc
 export CXX=g++

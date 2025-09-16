@@ -1,5 +1,7 @@
 #!/bin/bash
 
+git pull
+
 # prepare cross compiler (for x86, use native or x86 toolchain)
 export CC=aarch64-linux-gnu-gcc
 export LD=aarch64-linux-gnu-ld
