@@ -22,25 +22,6 @@ WARNFLAGS?= -Wall -Wextra -Wformat=2 -Wshadow -Wpointer-arith -Wcast-align -Wstr
 LDFLAGS  += -shared
 LDLIBS   += -lpthread
 
-# Build type control: keep compatibility with run-script which passes -static
-# BUILD_TYPE can be set explicitly, otherwise detect from incoming flags or toolchain.
-BUILD_TYPE ?= auto
-
-# If any incoming compile/link flags include -static, honor that and force static build.
-ifneq (,$(filter -static,$(CFLAGS) $(CPPFLAGS) $(LDFLAGS) $(LDLIBS)))
-	BUILD_TYPE := static
-endif
-
-CC_BASENAME := $(notdir $(CC))
-ifneq (,$(findstring musl,$(CC_BASENAME)))
-$(info >>> musl cross-compilation detected)
-# Default to shared for musl toolchains unless -static explicitly requested.
-ifneq ($(BUILD_TYPE),static)
-BUILD_TYPE := shared
-$(info >>> BUILD_TYPE set to 'shared' for musl cross-compilation)
-endif
-endif
-
 # Do not use libcurl from system libraries; force building without libcurl
 # so the plugin will use the external `curl` binary at runtime instead.
 # This removes any dependency on libcurl headers/libs during build.
@@ -99,43 +80,8 @@ ubnt_discover_cli: $(CLI_BIN)
 $(CLI_BIN): rev/discover/ubnt_discover.c rev/discover/ubnt_discover_cli.c $(HDRS)
 	$(CC) $(CFLAGS) $(WARNFLAGS) $(CPPFLAGS) -o $@ rev/discover/ubnt_discover.c rev/discover/ubnt_discover_cli.c $(LDLIBS)
 
-# Compute sanitized LDFLAGS/LDLIBS (remove any -static/-shared injected by toolchains)
-LDFLAGS_SANITIZED := $(filter-out -static -shared,$(LDFLAGS))
-LDLIBS_SANITIZED := $(filter-out -static -shared,$(LDLIBS))
-
-# Sanitize CFLAGS for compilation: remove any -static and optionally -fPIC for static builds
-CFLAGS_SANITIZED := $(filter-out -static,$(CFLAGS))
-ifeq ($(BUILD_TYPE),static)
-CFLAGS_COMPILE := $(filter-out -fPIC -static,$(CFLAGS))
-else
-CFLAGS_COMPILE := $(CFLAGS_SANITIZED)
-endif
-
-# Build object list under $(BUILDDIR)
-OBJS := $(patsubst %.c,$(BUILDDIR)/%.o,$(SRCS))
-
-# Plugin targets: shared .so or static archive .a
-PLUGIN_STATIC := $(BUILDDIR)/lib$(PLUGIN_NAME).a
-PLUGIN_SHARED := $(BUILDDIR)/$(SONAME)
-ifeq ($(BUILD_TYPE),static)
-PLUGIN_TARGET := $(PLUGIN_STATIC)
-else
-PLUGIN_TARGET := $(PLUGIN_SHARED)
-endif
-
-# Object compilation rule (creates parent dirs as needed)
-$(BUILDDIR)/%.o: %.c $(HDRS) | $(BUILDDIR)
-	$(MKDIR_P) $(dir $@)
-	$(CC) $(CFLAGS_COMPILE) $(WARNFLAGS) $(CPPFLAGS) -c -o $@ $<
-
-# Static archive target
-$(PLUGIN_STATIC): $(OBJS) | $(BUILDDIR)
-	ar rcs $@ $(OBJS)
-
-# Shared object target
-$(PLUGIN_SHARED): $(OBJS) | $(BUILDDIR)
-	# Link shared plugin with sanitized LDFLAGS/LDLIBS
-	$(CC) $(LDFLAGS_SANITIZED) -shared -o $@ $(OBJS) $(LDLIBS_SANITIZED)
+$(BUILDDIR)/$(SONAME): $(SRCS) $(HDRS) | $(BUILDDIR)
+	$(CC) $(CFLAGS) $(WARNFLAGS) $(CPPFLAGS) -o $@ $(SRCS) $(LDFLAGS) $(LDLIBS)
 
 $(BUILDDIR):
 	$(MKDIR_P) $(BUILDDIR)
@@ -144,7 +90,7 @@ clean: status_plugin_clean
 status_plugin_clean:
 	$(RM) -r $(BUILDDIR)
 
-status_plugin: $(PLUGIN_TARGET)
+status_plugin: $(BUILDDIR)/$(SONAME)
 
 install: status_plugin_install
 uninstall: status_plugin_uninstall
@@ -152,7 +98,7 @@ uninstall: status_plugin_uninstall
 status_plugin_install: status_plugin
 	@echo ">>> Installing plugin to $(DESTDIR)$(LIBDIR)"
 	$(MKDIR_P) "$(DESTDIR)$(LIBDIR)"
-	install -m 0755 "$(PLUGIN_TARGET)" "$(DESTDIR)$(LIBDIR)/"
+	install -m 0755 "$(BUILDDIR)/$(SONAME)" "$(DESTDIR)$(LIBDIR)/"
 	@echo ">>> Installing shared data to $(DESTDIR)$(SHAREDIR)"
 	$(MKDIR_P) "$(DESTDIR)$(ASSETDIR)"
 	@if [ -d www ]; then \
@@ -171,6 +117,6 @@ status_plugin_install: status_plugin
 
 status_plugin_uninstall:
 	@echo ">>> Removing plugin and data from $(DESTDIR)$(PREFIX)"
-	$(RM) "$(DESTDIR)$(LIBDIR)/$(notdir $(PLUGIN_TARGET))"
+	$(RM) "$(DESTDIR)$(LIBDIR)/$(SONAME)"
 	$(RM) -r "$(DESTDIR)$(SHAREDIR)"
 	@echo ">>> Done."
