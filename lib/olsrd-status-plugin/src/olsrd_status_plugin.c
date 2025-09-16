@@ -4292,7 +4292,7 @@ static int h_status_traceroute(http_request_t *r) {
     }
     free(cmd);
     /* We'll build the full JSON into a malloc'd buffer so it can be cached. */
-    size_t resp_cap = 8192; size_t resp_len = 0; char *resp = malloc(resp_cap);
+    size_t resp_cap = 8193; size_t resp_len = 0; char *resp = malloc(resp_cap);
     if (!resp) {
       if (tout) free(tout);
       endpoint_coalesce_finish(&g_traceroute_co, NULL, 0);
