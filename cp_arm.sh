@@ -4,38 +4,19 @@
 #git pull
 #cd /workspace/olsrd/
 
+
 # PATH
 export PATH=$PATH:/opt/armv5-eabi--glibc--stable-2024.05-1/bin
 
+# prepare cross compiler
+export CC=arm-linux-gcc
+export CXX=arm-linux-g++
+export LD=arm-linux-ld
+export AR=arm-linux-ar
 
 # Preferred sysroot and toolchain location (adjust if you installed elsewhere)
-export SYSROOT="/opt/armv5-eabi--glibc--stable-2024.05-1/arm-buildroot-linux-gnueabi/sysroot"
+#export SYSROOT="/opt/armv5-eabi--glibc--stable-2024.05-1/arm-buildroot-linux-gnueabi/sysroot"
 
-# Detect a usable cross-compile prefix from common candidates and PATH
-if [ -z "$CROSS_PREFIX" ]; then
-	for p in arm-linux-gnueabihf- arm-linux-gnueabi- armv5-eabi- arm-none-eabi-; do
-		if command -v ${p}gcc >/dev/null 2>&1; then
-			CROSS_PREFIX=$p
-			break
-		fi
-	done
-fi
-
-# Fallback to explicit names if CROSS_PREFIX not detected
-if [ -n "$CROSS_PREFIX" ]; then
-	export CC=${CROSS_PREFIX}gcc
-	export CXX=${CROSS_PREFIX}g++
-	export AR=${CROSS_PREFIX}ar
-	export RANLIB=${CROSS_PREFIX}ranlib
-	export STRIP=${CROSS_PREFIX}strip
-	export LD=${CROSS_PREFIX}ld
-else
-	# keep older explicit names as last resort
-	export CC=arm-linux-gcc
-	export CXX=arm-linux-g++
-	export LD=arm-linux-ld
-	export AR=arm-linux-ar
-fi
 
 source ./cp_common.sh
 
