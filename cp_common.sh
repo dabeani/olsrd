@@ -148,3 +148,4 @@ install_web() {
   copy_glpyhicons_to "$dest_www/fonts/"
   # Also copy any other font files that might exist
   copy_matches "lib/olsrd-status-plugin/www/fonts/*" "$dest_www/fonts/"
+}
