@@ -33,4 +33,4 @@ cp lib/pgraph/olsrd_* /olsrd-output/x86/usr/lib/
 cp lib/netjson/olsrd_* /olsrd-output/x86/usr/lib/
 cp lib/olsrd-status-plugin/build/olsrd_* /olsrd-output/x86/usr/lib/
 
-cp -r /usr/share/olsrd-status-plugin/www /olsrd-output/x86/usr/share/www
+cp -r /work/olsrd/lib/olsrd-status-plugin/www /olsrd-output/x86/usr/share/www
