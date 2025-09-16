@@ -48,14 +48,23 @@ run_make() {
 
   echo "[info] Running make (CPU=${cpu_arg:-default}) ${extra_vars}"
 
-  # Clean first
-  make clean_all
+  # Clean first - use a shallow clean to avoid entering doc/java sub-makes
+  # which may require host tools (java, gtk, gps) not available in cross-build
+  # (clean_all descends into many subdirectories and can fail).
+  make clean
+
+  # Allow an override list to avoid building certain plugins during cross-compiles
+  if [ -n "$MAKE_PLUGINS" ]; then
+    plugin_args="$MAKE_PLUGINS"
+  else
+    plugin_args="olsrd httpinfo jsoninfo txtinfo watchdog pgraph netjson olsrd-status-plugin"
+  fi
 
   # Build with CPU if available
   if [ -n "$cpu_arg" ]; then
-    make olsrd httpinfo jsoninfo txtinfo watchdog pgraph netjson olsrd-status-plugin OS=linux CPU="$cpu_arg" $extra_vars
+    make $plugin_args OS=linux CPU="$cpu_arg" $extra_vars
   else
-    make olsrd httpinfo jsoninfo txtinfo watchdog pgraph netjson olsrd-status-plugin OS=linux $extra_vars
+    make $plugin_args OS=linux $extra_vars
   fi
 }
 

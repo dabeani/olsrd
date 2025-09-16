@@ -48,9 +48,9 @@ PLUGIN_LIST=(olsrd-status-plugin httpinfo txtinfo jsoninfo watchdog pgraph netjs
 # Pass the cross-toolchain variables explicitly to recursive make calls
 BUILD_VARS="BUILD_TYPE=shared"
 BUILD_VARS="$BUILD_VARS CC=$CC CXX=$CXX AR=$AR RANLIB=$RANLIB STRIP=$STRIP LD=$LD"
-if [ -n "$SYSROOT" ]; then
-	BUILD_VARS="$BUILD_VARS CFLAGS=--sysroot=$SYSROOT LDFLAGS=--sysroot=$SYSROOT"
-fi
+# Don't pass CFLAGS/LDFLAGS on the make command line (they would override
+# Makefile defaults including -shared). Export SYSROOT instead and let
+# Makefile.inc append --sysroot to CFLAGS/LDFLAGS when present.
 
 echo "[info] Running build with: $BUILD_VARS"
 cd "$REPO_ROOT"
