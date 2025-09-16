@@ -1,9 +1,8 @@
 #!/bin/bash
 
-git pull
-
-# prepare cross compiler (for x86, use native or x86 toolchain)
+# prepare cross compiler
 export CC=aarch64-linux-gnu-gcc
+export CXX=aarch64-linux-gnu-g++
 export LD=aarch64-linux-gnu-ld
 export AR=aarch64-linux-gnu-ar
 
@@ -18,10 +17,10 @@ echo "[info] Running build with: $BUILD_VARS"
 
 # Build using run_make helper which handles clean and plugin selection.
 # You can override MAKE_PLUGINS in the environment when cross-building to limit plugins.
-run_make x86
+run_make arm64
 
-# Destination root as requested (absolute path under /olsrd-output/x86)
-DEST_ROOT="/olsrd-output/x86"
+# Destination root as requested (absolute path under /olsrd-output/arm64)
+DEST_ROOT="/olsrd-output/arm64"
 
 ensure_dir "$DEST_ROOT/usr/sbin/"
 ensure_dir "$DEST_ROOT/usr/lib/"
