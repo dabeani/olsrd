@@ -21,7 +21,7 @@ export AR=arm-linux-ar
 make clean_all
 
 # prerpare to compile files
-make olsrd httpinfo jsoninfo txtinfo watchdog pgraph netjson status_plugin OS=linux CPU=arm
+make olsrd httpinfo jsoninfo txtinfo watchdog pgraph netjson olsrd-status-plugin OS=linux CPU=arm
 
 # Work from the repo root (script may be invoked from docker/container)
 REPO_ROOT=$(cd "$(dirname "$0")" && pwd)
