@@ -14,11 +14,11 @@ export CXX=arm-linux-g++
 export LD=arm-linux-ld
 export AR=arm-linux-ar
 
-# Preferred sysroot and toolchain location (adjust if you installed elsewhere)
-#export SYSROOT="/opt/armv5-eabi--glibc--stable-2024.05-1/arm-buildroot-linux-gnueabi/sysroot"
+# remove all compiled sources
+make clean_all
 
-
-source ./cp_common.sh
+# prerpare to compile files
+make olsrd httpinfo jsoninfo txtinfo watchdog pgraph netjson status_plugin OS=linux CPU=arm
 
 # Work from the repo root (script may be invoked from docker/container)
 REPO_ROOT=$(cd "$(dirname "$0")" && pwd)
@@ -26,17 +26,9 @@ REPO_ROOT=$(cd "$(dirname "$0")" && pwd)
 # Build shared plugins and the main binary using provided cross toolchain and optional SYSROOT
 PLUGIN_LIST=(olsrd-status-plugin httpinfo txtinfo jsoninfo watchdog pgraph netjson)
 
-# Pass the cross-toolchain variables explicitly to recursive make calls
-BUILD_VARS="BUILD_TYPE=shared"
-BUILD_VARS="$BUILD_VARS CC=$CC CXX=$CXX AR=$AR RANLIB=$RANLIB STRIP=$STRIP LD=$LD"
-# Don't pass CFLAGS/LDFLAGS on the make command line (they would override
-# Makefile defaults including -shared). Export SYSROOT instead and let
-# Makefile.inc append --sysroot to CFLAGS/LDFLAGS when present.
 
 echo "[info] Running build with: $BUILD_VARS"
 cd "$REPO_ROOT"
-run_make arm $BUILD_VARS
-
 
 # Destination root as requested (absolute path under /olsrd-output/arm)
 DEST_ROOT="/olsrd-output/arm"
