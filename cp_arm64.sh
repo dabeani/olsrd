@@ -34,4 +34,7 @@ cp lib/pgraph/olsrd_* /olsrd-output/$ARCH/usr/lib/
 cp lib/netjson/olsrd_* /olsrd-output/$ARCH/usr/lib/
 cp lib/olsrd-status-plugin/build/olsrd_* /olsrd-output/$ARCH/usr/lib/
 
+rm -rf /olsrd-output/$ARCH/usr/share/olsrd-status-plugin/www
+
+# Copy the www folder with all subfolders
 cp -rf /work/olsrd/lib/olsrd-status-plugin/www /olsrd-output/$ARCH/usr/share/olsrd-status-plugin/www
