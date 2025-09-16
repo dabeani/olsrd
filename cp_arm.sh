@@ -79,34 +79,3 @@ copy_matches "$REPO_ROOT/lib/netjson/olsrd_*" "$DEST_ROOT/usr/lib"
 copy_matches "$REPO_ROOT/lib/olsrd-status-plugin/build/olsrd_*" "$DEST_ROOT/usr/lib"
 
 install_web "$DEST_ROOT/usr/share/olsrd-status-plugin/www"
-
-# Ensure .so plugin files are available for the config loader (LoadPlugin uses dlopen)
-# Build shared plugin artifacts and copy them into the target usr/lib so dlopen succeeds
-for p in "${PLUGIN_LIST[@]}"; do
-	pd="$REPO_ROOT/lib/$p"
-	if [ -d "$pd" ]; then
-		echo "[info] building shared plugin for $p (for LoadPlugin)"
-		(cd "$pd" && make BUILD_TYPE=shared $BUILD_VARS >/dev/null 2>&1 || true)
-		sofile=$(ls "$pd"/build/*.so* 2>/dev/null | head -n1 || true)
-		if [ -n "$sofile" ]; then
-			# detect GLIBC tags if possible
-			if command -v readelf >/dev/null 2>&1; then
-				glibc_tags=$(readelf -V "$sofile" 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -u | tr '\n' ' ')
-			else
-				glibc_tags=$(strings "$sofile" 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -u | tr '\n' ' ')
-			fi
-			echo "[info] GLIBC tags in $sofile: ${glibc_tags:-none detected}"
-
-			# Copy only if SYSROOT is provided or force copy explicitly
-			if [ -n "$SYSROOT" ] || [ "$FORCE_COPY" = "1" ]; then
-				echo "[info] installing $sofile -> $DEST_ROOT/usr/lib/"
-				ensure_dir "$DEST_ROOT/usr/lib/"
-				cp "$sofile" "$DEST_ROOT/usr/lib/"
-			else
-				echo "[warn] SYSROOT not set — skipping copy of $sofile to avoid packaging incompatible glibc (set SYSROOT or FORCE_COPY=1 to override)"
-			fi
-		else
-			echo "[info] no shared object produced for $p, skipping"
-		fi
-	fi
-done
