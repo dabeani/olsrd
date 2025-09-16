@@ -4292,7 +4292,7 @@ static int h_status_traceroute(http_request_t *r) {
     }
     free(cmd);
     /* We'll build the full JSON into a malloc'd buffer so it can be cached. */
-    size_t resp_cap = 8193; size_t resp_len = 0; char *resp = malloc(resp_cap);
+    size_t resp_cap = 8193; size_t resp_len = 0; char *resp = malloc(resp_cap + 1);
     if (!resp) {
       if (tout) free(tout);
       endpoint_coalesce_finish(&g_traceroute_co, NULL, 0);
@@ -4301,7 +4301,7 @@ static int h_status_traceroute(http_request_t *r) {
     resp[0] = '\0';
     /* copy existing header content from outbuf into resp */
     size_t header_len = outlen;
-    if (resp_len + header_len + 1 > resp_cap) { size_t nc = resp_cap * 2 + header_len + 1024; char *tmp = realloc(resp, nc); if (tmp) { resp = tmp; resp_cap = nc; } }
+    if (resp_len + header_len + 1 > resp_cap) { size_t nc = resp_cap * 2 + header_len + 1024 + 1; char *tmp = realloc(resp, nc); if (tmp) { resp = tmp; resp_cap = nc; } }
     memcpy(resp + resp_len, outbuf, header_len); resp_len += header_len; resp[resp_len] = '\0';
     /* append array start */
     const char *arr_start = "\"trace_to_uplink\":[";
