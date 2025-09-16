@@ -1,0 +1,30 @@
+/* Minimal Bootstrap CSS to provide basic layout and components used by the plugin */
+html,body{height:100%;}
+body{font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin:0; padding:20px; background:#f8f8f8;}
+.container{width:100%;max-width:1100px;margin:0 auto}
+.row{display:flex;flex-wrap:wrap;margin-right:-15px;margin-left:-15px}
+.col-xs-6{flex:0 0 50%;max-width:50%;padding-right:15px;padding-left:15px}
+.card{background:#fff;border:1px solid #ddd;border-radius:4px;padding:10px}
+.page-header h1{margin:0 0 10px}
+.nav{padding-left:0;margin-bottom:0;list-style:none}
+.nav-tabs{border-bottom:1px solid #ddd;display:flex}
+.nav-tabs>li{margin-bottom:-1px}
+.nav-tabs>li>a{display:block;padding:8px 12px;border:1px solid transparent;border-radius:4px 4px 0 0;text-decoration:none;color:#337ab7}
+.nav-tabs>li.active>a{background:#fff;border-color:#ddd;border-bottom-color:transparent;color:#333}
+.table{width:100%;margin-bottom:1rem;background-color:transparent;border-collapse:collapse}
+.table th,.table td{padding:.75rem;vertical-align:top;border:1px solid #dee2e6}
+.table thead th{background-color:#f5f5f5}
+.btn{display:inline-block;font-weight:400;color:#212529;text-align:center;vertical-align:middle;user-select:none;background-color:#e2e6ea;border:1px solid #d3d9df;padding:.375rem .75rem;border-radius:.25rem}
+.btn-primary{color:#fff;background-color:#007bff;border-color:#007bff}
+.btn-default{background-color:#fff;border-color:#ccc}
+.form-control{display:block;width:100%;padding:.375rem .75rem;border:1px solid #ced4da;border-radius:.25rem}
+.input-group{position:relative;display:flex;width:100%}
+.input-group .form-control{flex:1}
+.alert{padding:.75rem 1.25rem;margin-bottom:1rem;border:1px solid transparent;border-radius:.25rem}
+.alert-warning{color:#856404;background-color:#fff3cd;border-color:#ffeeba}
+.panel{background-color:#fff;border:1px solid #ddd;border-radius:4px;margin-bottom:1rem}
+.panel-body{padding:15px}
+.panel-footer{padding:10px 15px;background-color:#f5f5f5;border-top:1px solid #ddd}
+.dl-horizontal dt{float:left;width:160px;clear:left;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dl-horizontal dd{margin-left:180px}
+*** End Patch

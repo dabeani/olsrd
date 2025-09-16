@@ -1,0 +1,291 @@
+/* Custom tweaks for olsrd-status-plugin UI */
+/* Prevent very long node names from wrapping; instead allow horizontal scrolling inside the cell */
+#connectionsTable td:nth-child(7),
+#neighborsTable td:nth-child(5),
+#devicesTable td:nth-child(4) {
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Small search box container above tables */
+.table-search-container {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+.table-search-input {
+  width: 220px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+/* Mobile optimizations for table search */
+@media (max-width: 768px) {
+  .table-search-container {
+    justify-content: flex-start;
+  }
+  .table-search-input {
+    width: 100%;
+    max-width: 280px;
+  }
+  
+  /* Table optimizations for mobile */
+  .table-responsive { font-size: 12px; }
+  .table-condensed th, .table-condensed td { padding: 4px 6px; }
+  
+  /* Traceroute input optimization */
+  #tr-host { width: 100% !important; max-width: 320px; }
+}
+
+/* Make table header clickable pointer more obvious */
+#connectionsTable th, #neighborsTable th, #devicesTable th, #olsrLinksTable th {
+  cursor: pointer;
+}
+
+/* small sort mark (▲/▼) */
+.sort-mark { font-size: 11px; color: #666; }
+
+/* New layout styles */
+.layout-root { max-width:100%; width:100%; margin: 0; padding:0 12px; }
+.site-header { display:flex; align-items:center; justify-content:space-between; padding:4px 0; border-bottom:1px solid #eee; margin-bottom:6px; }
+.sidebar { padding-right:8px; }
+.sidebar .nav { background: #fafafa; border:1px solid #eee; padding:6px; border-radius:6px; font-size:14px }
+.content { min-height:400px; }
+
+/* utility hidden class for conditional tab visibility - don't hide active tabs */
+.hidden:not(.active) { display: none; }
+
+/* Tab status indicators */
+.tab-status {
+  font-size: 10px;
+  font-weight: bold;
+  margin-left: 4px;
+  display: inline-block;
+  width: 12px;
+  text-align: center;
+}
+.tab-status.loaded {
+  color: #5cb85c;
+}
+.tab-status.loading {
+  color: #f0ad4e;
+}
+.tab-status.error {
+  color: #d9534f;
+}
+
+/* Tab content visibility is now handled by inline styles */
+
+/* smaller adjustments for mobile */
+@media (max-width: 768px) {
+  .sidebar { order:2; margin-top:12px; }
+  .content { order:1; }
+  .layout-root { padding: 6px; }
+  
+  /* Improve button touch targets */
+  .btn { min-height: 32px; padding: 6px 12px; }
+  .btn-xs { min-height: 28px; padding: 4px 8px; }
+  
+  /* Better spacing for mobile */
+  .tab-content { margin-top: 10px; }
+  .table-responsive { margin-bottom: 15px; }
+  
+  /* Improve form inputs */
+  .form-control { font-size: 16px; } /* Prevent zoom on iOS */
+  input[type="text"], input[type="number"] { font-size: 16px; }
+}
+
+/* Modal overlay/panel styles to replace inline styles */
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:2000; overflow:auto; }
+.modal-overlay[aria-hidden="false"] { display:block; }
+.modal-panel { background:#fff; margin:50px auto; padding:18px 22px 20px; max-width:900px; border:1px solid #bbb; border-radius:6px; box-shadow:0 8px 24px rgba(0,0,0,0.25); }
+.modal-panel-sm { max-width:920px; padding:14px; margin:60px auto; }
+.modal-body-scroll { border:1px solid #ddd; border-radius:4px; max-height:520px; overflow:auto; }
+.modal-pre { margin:0; padding:12px; font-family:monospace; font-size:12px; }
+
+/* Mobile optimizations for modals */
+@media (max-width: 768px) {
+  .modal-panel { margin:20px auto; padding:12px 16px 16px; max-width:95%; }
+  .modal-panel-sm { margin:15px auto; padding:10px; max-width:98%; }
+  .modal-body-scroll { max-height:400px; }
+}
+
+/* status-summary-card removed: styles intentionally deleted */
+
+/* Modal close button alignment helper */
+.modal-panel .modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-bottom:8px; }
+
+/* Small metric badges in OLSR links */
+.metric-badge { display:inline-block; padding:4px 8px; border-radius:12px; font-size:11px; color:#fff; margin-right:6px; }
+.metric-badge.small { padding:2px 6px; font-size:10px; border-radius:10px; }
+.metric-badge.routes { background:#2b9af3; }
+.metric-badge.nodes { background:#6cc070; }
+.lq-badge { display:inline-block; padding:3px 6px; border-radius:6px; font-size:11px; color:#fff; }
+.lq-low { background:#2ecc71; }
+.lq-med { background:#f6c85f; color:#5a3b00; }
+.lq-high { background:#e74c3c; }
+/* Emphasize that lq-low == good (green), lq-high == poor (red). */
+
+/* Statistics block sizing */
+#stats-graphs { display:flex; gap:18px; flex-wrap:wrap; align-items:flex-start; }
+#stats-graphs .stats-block { flex:1; min-width:240px; }
+#stats-graphs .stats-block canvas { width:100%; height:120px; background:#fafafa; border:1px solid #eee; border-radius:4px; }
+/* ETX badge: green good -> red bad */
+.etx-badge { display:inline-block; padding:3px 6px; border-radius:6px; font-size:11px; color:#fff; margin-right:6px; }
+.etx-good { background:#2ecc71; }
+.etx-med { background:#f6c85f; color:#5a3b00; }
+.etx-bad { background:#e74c3c; }
+.action-btn { margin-left:6px; }
+
+/* live indicator for statistics graphs */
+.live-dot-updating { background: #2ecc71 !important; box-shadow: 0 0 6px rgba(46,204,113,0.6); }
+.live-dot-stale { background: #ccc !important; box-shadow: none; }
+.spark-info { display:flex; flex-direction:column; justify-content:center; align-items:flex-end; }
+
+/* tiny timestamp next to live dot showing last sample time */
+.spark-ts { font-size:11px; color:#666; margin-left:8px; vertical-align:middle; }
+.spark-ts[title] { cursor:help; }
+
+/* page-level main host (avoid duplicate ID with nav-host) */
+#main-host-page { color:#013369; font-weight:600; }
+
+/* Compact status badges shown in header */
+.status-badges { display:flex; gap:8px; align-items:center; }
+.status-badges .badge { background:#eee; color:#333; padding:4px 8px; border-radius:10px; font-size:12px; }
+.status-badges .badge.nodes { background:#6cc070; color:#063; }
+.status-badges .badge.routes { background:#2b9af3; color:#04315a; }
+
+/* Compact global header inside #global-versions-header */
+#global-versions-header .panel.panel-default { margin:0; border-radius:6px; }
+#global-versions-header .panel-body { padding:4px 8px; }
+#global-versions-header .status-badges { gap:6px; }
+#global-versions-header .status-olsr-badge { font-size:12px; padding:3px 8px; border-radius:10px; }
+#global-versions-header .status-olsr-badge span { display:inline-block; }
+#global-versions-header .status-olsr-badge span:first-child { width:14px; height:14px; line-height:14px; text-align:center; border-radius:50%; margin-right:6px; }
+
+/* Make the global header full-bleed across the viewport (escape centered .container) */
+#global-versions-header {
+  width: calc(100% + 24px); /* compensate container horizontal padding (layout-root uses 12px) */
+  margin-left: -12px;
+  max-width: none;
+}
+
+.panel-body { padding: 4px 8px; }
+.panel { margin-bottom: 6px; }
+.table-condensed th, .table-condensed td { padding:4px 6px; }
+.table { margin-bottom: 8px; }
+
+/* Make nav sidebar slightly denser */
+.sidebar .nav { padding:4px; font-size:13px }
+
+/* Badge interaction and states */
+.status-badges .badge { cursor: default; }
+.status-badges .badge.clickable { cursor: pointer; }
+.status-badges .badge.warn { box-shadow: 0 0 8px rgba(255,165,0,0.2); }
+.status-badges .badge.crit { box-shadow: 0 0 12px rgba(255,69,58,0.25); }
+
+/* Compact dropdown menu for header status (absolute positioned) */
+.status-dropdown-wrap { position:relative; }
+.status-dropdown-menu { display:none; position:absolute; right:0; top:28px; z-index:2200; background:#fff; border:1px solid #ddd; border-radius:6px; box-shadow:0 8px 18px rgba(0,0,0,0.12); }
+.status-dropdown-menu[aria-hidden="false"] { display:block; }
+.status-badges .badge { transition: box-shadow 200ms ease, background-color 200ms ease; }
+.status-badges .badge.clickable { cursor:pointer; }
+
+/* Source column: small colored dot + label */
+.device-source { display:flex; align-items:center; gap:8px; }
+.device-source .dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:6px; }
+.device-source .lbl { font-size:12px; color:#333; }
+.device-source .src-arp .dot { background:#9b59b6; } /* purple for ARP */
+.device-source .src-ubnt-discover .dot { background:#2b9af3; } /* blue for ubnt-discover */
+.device-source .src-unknown .dot { background:#ccc; }
+.device-source .lbl.small { font-size:11px; color:#666; }
+
+/* Sticky footer adjustments (matches inline HTML in index.html) */
+.layout-root { padding-bottom: 32px; }
+
+/* Sticky footer adjustments (matches inline HTML in index.html) */
+#status-footer { height: 28px; background: #f1f1f1; pointer-events: none; }
+
+/* Pending requests badge in footer */
+.footer-pending { min-width:20px; padding:2px 8px; border-radius:12px; background:#bdbdbd; color:#fff; font-size:12px; text-align:center; }
+.footer-pending.nonzero { background:#f0ad4e; box-shadow: 0 0 6px rgba(240,173,78,0.35); color:#222; }
+
+/* keep legacy footer dots definitions for compatibility (not used by current markup) */
+/* pending tooltip styling hint: ensure tooltip via title attribute shows full pending endpoints */
+.footer-pending[title] { cursor: help; }
+
+/* Footer latency text */
+#footer-latency, #footer-latency * { color: #666; font-size:12px; }
+.footer-latency-ok { color: #2ecc71; }
+.footer-latency-warn { color: #f0ad4e; }
+.footer-latency-bad { color: #e74c3c; }
+
+/* Trend indicators for statistics tab */
+.trend-up { color: #2ecc71; font-weight:700; }
+.trend-down { color: #e74c3c; font-weight:700; }
+.trend-flat { color: #999; }
+
+/* Footer diagnostics drawer */
+.footer-diagnostics { position: fixed; left: 0; right: 0; bottom: 0; height: 0; z-index: 2450; pointer-events: none; transition: height 260ms ease; overflow: hidden; }
+.footer-diagnostics[aria-hidden="false"] { height: 22vh; pointer-events: auto; }
+.footer-diagnostics-inner { background: #fff; border-top: 1px solid #ddd; height: 100%; box-shadow: 0 -8px 24px rgba(0,0,0,0.12); display:flex; flex-direction:column; }
+.footer-diagnostics-header { display:flex; align-items:center; gap:8px; padding:4px 8px; border-bottom:1px solid #eee; }
+.footer-diagnostics-body { padding:6px 8px; overflow:auto; display:block; }
+.diag-box { background:#f8f9fa; border-radius:6px; padding:6px; min-width:200px; max-width:420px; border-left:4px solid #007bff; box-shadow: 0 1px 2px rgba(0,0,0,0.04); margin-right:6px; }
+.diag-box .diag-title { font-weight:700; margin-bottom:6px; }
+.diag-key { color:#495057; font-weight:600; font-size:12px; }
+.diag-value { color:#6c757d; font-family: 'Monaco','Menlo','Ubuntu Mono', monospace; font-size:13px; word-break:break-word; margin-top:4px; }
+.diag-row { margin-bottom:8px; display:flex; flex-direction:column; }
+.diag-small { font-size:12px; color:#666; }
+.diag-box .btn { padding:2px 6px; font-size:11px; }
+.diag-box header, .diag-box .diag-title { display:block; }
+.diag-body pre { background:#fcfcfc; border:1px solid #eee; padding:8px; border-radius:4px; font-size:12px; }
+.diag-box .diag-body { white-space:normal; }
+.diag-subgroup { margin-bottom:8px; border-top:1px dashed #eee; padding-top:8px; }
+.diag-subtitle { font-weight:700; margin-bottom:6px; font-size:12px; color:#333; }
+/* Subgroup copy icon button - hidden in compact diagnostics view per user request */
+.diag-subcopy { display: none !important; }
+
+/* Compact diagnostics listing style - tighter monospace one-line entries
+  Reduced font-size/line-height and scrollable max-height to fit more parameters */
+.diag-compact-pre { font-family: Monaco, Menlo, 'Ubuntu Mono', monospace; font-size:9px; line-height:1.0; white-space:pre-wrap; margin:0; max-height:14vh; overflow:auto; padding-right:6px; }
+
+/* New dense grid layout for diagnostics: tiny cards per key/value pair */
+.diag-compact-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:6px; align-items:start; max-height:calc(22vh - 36px); overflow:auto; padding-right:6px; }
+.diag-compact-card { background:#fafafa; border:1px solid #eee; padding:6px 8px; border-radius:4px; display:flex; gap:6px; align-items:flex-start; font-size:10px; }
+.diag-compact-key { color:#333; font-weight:600; flex:0 0 48%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-family:system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; }
+.diag-compact-val { color:#555; font-family: Monaco, Menlo, 'Ubuntu Mono', monospace; font-size:10px; line-height:1; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+
+/* Modal overlay (re-use .modal-overlay/.modal-panel rules already present) */
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:2600; }
+.modal-overlay[aria-hidden="false"] { display:block; }
+.modal-panel-sm { max-width:720px; margin:48px auto; padding:12px; }
+.diag-raw-pre { max-height:20vh; overflow:auto; font-size:12px; }
+
+/* Footer layout: use separators and right-aligned compact items */
+#status-footer .footer-sep { color:#bbb; margin:0 8px; }
+#status-footer #footer-indicators { display:flex; align-items:center; gap:8px; }
+#status-footer #footer-indicators > div { display:flex; align-items:center; gap:6px; }
+#status-footer .footer-small-icon { font-size:13px; color:#666; }
+/* truncated single-line with ellipsis and tooltip support */
+.footer-trunc { max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block; vertical-align:middle; }
+.footer-trunc.short { max-width:120px; }
+
+/* move indicators slightly to the right so 'Served by' sits left */
+#status-footer #footer-indicators { margin-left:12px; }
+
+/* Responsive: hide some footer items on narrow screens to avoid wrapping */
+@media (max-width:600px) {
+  #status-footer #footer-last-updated { display:none; }
+  #status-footer .footer-diag-summary { display:none; }
+  #status-footer .footer-sep { display:none; }
+  #status-footer #footer-last-request { max-width:90px; }
+  
+  /* Further mobile optimizations for very small screens */
+  .nav-pills li { width: 100%; margin-bottom: 2px; }
+  .nav-pills li a { text-align: left; padding: 8px 12px; }
+  .site-header { padding: 2px 0; }
+  .page-header h1 { font-size: 24px; margin-bottom: 4px; }
+}
