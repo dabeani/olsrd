@@ -2800,8 +2800,23 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
   char homes_json[512] = "[]";
   if (homes_out && homes_n>0) { size_t hn = homes_n; char *tmp = strndup(homes_out, homes_n); if (tmp) { while (hn>0 && (tmp[hn-1]=='\n' || tmp[hn-1]==',')) { tmp[--hn]=0; } snprintf(homes_json,sizeof(homes_json),"[%s]", tmp[0]?tmp:"" ); free(tmp); } }
   char bootimage_md5[128] = "n/a"; if (md5_out && md5_n>0) { char *m = strndup(md5_out, md5_n); if (m) { char *nl = strchr(m,'\n'); if (nl) *nl=0; strncpy(bootimage_md5, m, sizeof(bootimage_md5)-1); free(m); } }
+  /* create a versions-string with format YYYYMMDDHHMMSS (DATETIMEMINUTESSECONDS) */
+  char versions_string[32] = "";
+  {
+    time_t _t = time(NULL);
+    struct tm _tm;
+#if defined(_WIN32) || defined(_WIN64)
+    localtime_s(&_tm, &_t);
+#else
+    localtime_r(&_t, &_tm);
+#endif
+    /* YYYYMMDDHHMMSS */
+    snprintf(versions_string, sizeof(versions_string), "%04d%02d%02d%02d%02d%02d",
+             _tm.tm_year + 1900, _tm.tm_mon + 1, _tm.tm_mday, _tm.tm_hour, _tm.tm_min, _tm.tm_sec);
+  }
+
   snprintf(obuf, buf_sz,
-    "{\"host\":\"%s\",\"system\":\"%s\",\"olsrd_running\":%s,\"olsr2_running\":%s,\"olsrd_exists\":%s,\"olsr2_exists\":%s,\"olsrd4watchdog\":%s,\"autoupdate_wizards_installed\":\"%s\",\"autoupdate_settings\":{\"auto_update_enabled\":%s,\"olsrd_v1\":%s,\"olsrd_v2\":%s,\"wsle\":%s,\"ebtables\":%s,\"blockpriv\":%s},\"homes\":%s,\"bootimage\":{\"md5\":\"%s\"},\"bmk_webstatus\":\"%s\",\"ipv4\":\"%s\",\"ipv6\":\"%s\",\"linkserial\":\"%s\",\"olsrd\":\"%s\",\"olsrd_details\":{\"version\":\"%s\",\"description\":\"%s\",\"device\":\"%s\",\"date\":\"%s\",\"release\":\"%s\",\"source\":\"%s\"}}\n",
+    "{\"host\":\"%s\",\"system\":\"%s\",\"olsrd_running\":%s,\"olsr2_running\":%s,\"olsrd_exists\":%s,\"olsr2_exists\":%s,\"olsrd4watchdog\":%s,\"autoupdate_wizards_installed\":\"%s\",\"autoupdate_settings\":{\"auto_update_enabled\":%s,\"olsrd_v1\":%s,\"olsrd_v2\":%s,\"wsle\":%s,\"ebtables\":%s,\"blockpriv\":%s},\"homes\":%s,\"bootimage\":{\"md5\":\"%s\"},\"bmk_webstatus\":\"%s\",\"ipv4\":\"%s\",\"ipv6\":\"%s\",\"linkserial\":\"%s\",\"olsrd\":\"%s\",\"olsrd_details\":{\"version\":\"%s\",\"description\":\"%s\",\"device\":\"%s\",\"date\":\"%s\",\"release\":\"%s\",\"source\":\"%s\"},\"versions_string\":\"%s\"}\n",
     host,
     system_type,
     olsrd_on?"true":"false",
@@ -2828,7 +2843,8 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
     olsrd_dev[0]?olsrd_dev:"",
     olsrd_date[0]?olsrd_date:"",
     olsrd_rel[0]?olsrd_rel:"",
-    olsrd_src[0]?olsrd_src:""
+    olsrd_src[0]?olsrd_src:"",
+    versions_string
   );
 
   if (adu_dat) free(adu_dat);

@@ -419,6 +419,10 @@ node www/test/diagnostics-smoke.js
 
 These changes are intentionally small and non-invasive. If you want the smoke test wired into the existing test scripts (`www/test/package.json`), or prefer the diagnostics endpoint to include additional fields (platform, nodedb summary, etc.), I can add those as a follow-up.
 
+New: versions_string
+---------------------
+The plugin now emits a small additional field inside the `versions` JSON object called `versions_string`. This is a compact timestamp created at request-time using the format `YYYYMMDDHHMMSS` (date + hours + minutes + seconds). It is included in `/versions.json` and therefore also available in the combined `/diagnostics.json` payload and shown in the Diagnostics drawer of the web UI.
+
 ## Extending
 Typical extension points inside `src/olsrd_status_plugin.c`:
 * Add new counters in `normalize_olsrd_links()`.
