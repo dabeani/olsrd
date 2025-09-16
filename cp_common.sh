@@ -12,7 +12,16 @@ copy_if_exists() {
   src="$1"
   dst="$2"
   if [ -f "$src" ]; then
-    cp "$src" "$dst"
+    # If dst is an existing directory or ends with '/', ensure it exists and copy into it
+    if [ -d "$dst" ] || [[ "$dst" == */ ]]; then
+      ensure_dir "$dst"
+      cp "$src" "$dst"
+    else
+      # dst is a file path; ensure parent directory exists
+      dst_dir="$(dirname "$dst")"
+      ensure_dir "$dst_dir"
+      cp "$src" "$dst"
+    fi
   else
     echo "[info] Skipping missing file: $src"
   fi
@@ -26,6 +35,22 @@ copy_glpyhicons_to() {
   copy_if_exists lib/olsrd-status-plugin/www/fonts/glyphicons-halflings-regular.ttf "$dstdir"
   copy_if_exists lib/olsrd-status-plugin/www/fonts/glyphicons-halflings-regular.woff "$dstdir"
   copy_if_exists lib/olsrd-status-plugin/www/fonts/glyphicons-halflings-regular.woff2 "$dstdir"
+}
+
+# Copy matching files by glob to destination directory if they exist
+copy_matches() {
+  src_pattern="$1"
+  dst_dir="$2"
+  ensure_dir "$dst_dir"
+  shopt -s nullglob
+  files=( $src_pattern )
+  shopt -u nullglob
+  if [ ${#files[@]} -gt 0 ]; then
+    echo "[info] copying ${#files[@]} file(s) -> $dst_dir"
+    cp "${files[@]}" "$dst_dir/"
+  else
+    echo "[info] no files matching $src_pattern"
+  fi
 }
 
 # High level helpers
@@ -114,14 +139,12 @@ install_web() {
   ensure_dir "$dest_www/js"
   ensure_dir "$dest_www/css"
   ensure_dir "$dest_www/fonts"
+  # Copy all html, js and css files so new assets are not missed
+  copy_matches "lib/olsrd-status-plugin/www/*.html" "$dest_www"
+  copy_matches "lib/olsrd-status-plugin/www/js/*.js" "$dest_www/js"
+  copy_matches "lib/olsrd-status-plugin/www/css/*.css" "$dest_www/css"
 
-  cp lib/olsrd-status-plugin/www/index.html "$dest_www/"
-  cp lib/olsrd-status-plugin/www/js/app.js "$dest_www/js/"
-  cp lib/olsrd-status-plugin/www/js/jquery.min.js "$dest_www/js/"
-  cp lib/olsrd-status-plugin/www/js/chart.min.js "$dest_www/js/"
-  cp lib/olsrd-status-plugin/www/js/bootstrap.min.js "$dest_www/js/"
-  cp lib/olsrd-status-plugin/www/css/custom.css "$dest_www/css/"
-  cp lib/olsrd-status-plugin/www/css/bootstrap.min.css "$dest_www/css/"
-
+  # Copy common font files (keep helper for specific glyphicons files)
   copy_glpyhicons_to "$dest_www/fonts/"
-}
+  # Also copy any other font files that might exist
+  copy_matches "lib/olsrd-status-plugin/www/fonts/*" "$dest_www/fonts/"
