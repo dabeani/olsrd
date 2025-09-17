@@ -138,6 +138,24 @@ static int g_fetch_dropped_warn = 10;
 /* Mutex protecting non-atomic counters; always present so endpoints can lock it regardless of atomics availability */
 static pthread_mutex_t g_metrics_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* In-process stderr capture: pipe stderr into a reader thread and store recent lines
+ * in a circular buffer so the /log HTTP endpoint can return recent plugin logs.
+ * Buffer size is configurable via PlParam 'log_buf_lines' or environment
+ * variable OLSRD_STATUS_LOG_BUF_LINES. Client requests to /log?lines=N will
+ * be capped to the configured buffer size.
+ */
+#define LOG_LINE_MAX 512
+static int g_log_buf_lines = 100; /* default entries */
+static int g_cfg_log_buf_lines_set = 0; /* set if PlParam provided */
+static char *g_log_buf_data = NULL; /* malloc'd contiguous buffer: lines * LOG_LINE_MAX bytes */
+static int g_log_head = 0; /* next write index */
+static int g_log_count = 0; /* number of stored lines */
+static pthread_mutex_t g_log_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_stderr_pipe_rd = -1;
+static int g_orig_stderr_fd = -1;
+static pthread_t g_stderr_thread = 0;
+static int g_stderr_thread_running = 0;
+
 /* Periodic reporter interval (seconds). 0 to disable. Configurable via PlParam 'fetch_report_interval' or env OLSRD_STATUS_FETCH_REPORT_INTERVAL */
 static int g_fetch_report_interval = 0; /* default: disabled */
 static int g_cfg_fetch_report_set = 0;
@@ -5032,24 +5050,6 @@ static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
 nothing_found:
   out[0]=0;
 }
-
-/* In-process stderr capture: pipe stderr into a reader thread and store recent lines
- * in a circular buffer so the /log HTTP endpoint can return recent plugin logs.
- * Buffer size is configurable via PlParam 'log_buf_lines' or environment
- * variable OLSRD_STATUS_LOG_BUF_LINES. Client requests to /log?lines=N will
- * be capped to the configured buffer size.
- */
-#define LOG_LINE_MAX 512
-static int g_log_buf_lines = 100; /* default entries */
-static int g_cfg_log_buf_lines_set = 0; /* set if PlParam provided */
-static char *g_log_buf_data = NULL; /* malloc'd contiguous buffer: lines * LOG_LINE_MAX bytes */
-static int g_log_head = 0; /* next write index */
-static int g_log_count = 0; /* number of stored lines */
-static pthread_mutex_t g_log_lock = PTHREAD_MUTEX_INITIALIZER;
-static int g_stderr_pipe_rd = -1;
-static int g_orig_stderr_fd = -1;
-static pthread_t g_stderr_thread = 0;
-static int g_stderr_thread_running = 0;
 
 static int set_str_param(const char *value, void *data, set_plugin_parameter_addon addon __attribute__((unused))) {
   if (!value || !data) return 1;
