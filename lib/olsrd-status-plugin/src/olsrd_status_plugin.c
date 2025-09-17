@@ -2947,12 +2947,29 @@ static int h_status(http_request_t *r) {
   pthread_mutex_unlock(&g_fetch_q_lock);
   METRIC_LOAD_ALL(m_d, m_r, m_s);
 
-  /* default route */
+  /* default route (IPv4 and IPv6) */
+  /* detect OLSR process state to decide whether to prefer IPv6 default when olsrd2 is present */
+  int olsr2_on = 0, olsrd_on = 0; detect_olsr_processes(&olsrd_on, &olsr2_on);
   char def_ip[64] = ""; char def_dev[64] = ""; char *rout=NULL; size_t rn=0;
-  if (util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout,&rn)==0 && rout) {
+  /* prefer IPv4 default by default */
+  if (util_exec("/sbin/ip -4 route show default 2>/dev/null || /usr/sbin/ip -4 route show default 2>/dev/null || ip -4 route show default 2>/dev/null", &rout,&rn)==0 && rout) {
     char *p=strstr(rout,"via "); if(p){ p+=4; char *q=strchr(p,' '); if(q){ size_t L=q-p; if(L<sizeof(def_ip)){ strncpy(def_ip,p,L); def_ip[L]=0; } } }
     p=strstr(rout," dev "); if(p){ p+=5; char *q=strchr(p,' '); if(!q) q=strchr(p,'\n'); if(q){ size_t L=q-p; if(L<sizeof(def_dev)){ strncpy(def_dev,p,L); def_dev[L]=0; } } }
-    free(rout);
+    free(rout); rout=NULL; rn=0;
+  }
+  /* If olsr2 is running, attempt to also detect an IPv6 default and prefer it when available */
+  if (olsr2_on) {
+    char def6_ip[128] = ""; char def6_dev[64] = ""; char *r6 = NULL; size_t r6n = 0;
+    if (util_exec("/sbin/ip -6 route show default 2>/dev/null || /usr/sbin/ip -6 route show default 2>/dev/null || ip -6 route show default 2>/dev/null", &r6, &r6n) == 0 && r6) {
+      char *p = strstr(r6, "via "); if (p) { p += 4; char *q = strchr(p, ' '); if (q) { size_t L = q - p; if (L < sizeof(def6_ip)) { strncpy(def6_ip, p, L); def6_ip[L] = 0; } } }
+      p = strstr(r6, " dev "); if (p) { p += 5; char *q = strchr(p, ' '); if (!q) q = strchr(p, '\n'); if (q) { size_t L = q - p; if (L < sizeof(def6_dev)) { strncpy(def6_dev, p, L); def6_dev[L] = 0; } } }
+      /* prefer IPv6 default when olsr2 is present (EdgeRouter uses IPv6 uplink sometimes) */
+      if (def6_ip[0]) {
+        strncpy(def_ip, def6_ip, sizeof(def_ip)-1); def_ip[sizeof(def_ip)-1]=0;
+        if (def6_dev[0]) { strncpy(def_dev, def6_dev, sizeof(def_dev)-1); def_dev[sizeof(def_dev)-1]=0; }
+      }
+      free(r6); r6 = NULL; r6n = 0;
+    }
   }
 
   {
@@ -2994,6 +3011,25 @@ static int h_status(http_request_t *r) {
   /* (legacy duplicate fetch block removed after refactor) */
 
   char *olsr_neighbors_raw=NULL; size_t olnn=0; if(util_http_get_url_local("http://127.0.0.1:9090/neighbors", &olsr_neighbors_raw, &olnn, 1) != 0) { if(olsr_neighbors_raw){ free(olsr_neighbors_raw); olsr_neighbors_raw=NULL; } olnn=0; }
+  /* If olsrd2 is running and the default neighbor endpoint returned nothing,
+   * try the telnet bridge endpoints that some olsrd2 builds expose (used by
+   * bmk-webstatus.py). Prefer JSON output when available.
+   */
+  if (olsr2_on && (!olsr_neighbors_raw || olnn == 0)) {
+    char *tmp = NULL; size_t tlen = 0;
+    /* try telnet bridge endpoints exposed by some olsrd2 builds (prefer JSON) */
+    fprintf(stderr, "[status-plugin] olsr2 present, attempting telnet nhdpinfo endpoints\n");
+    if (util_http_get_url_local("http://127.0.0.1:8000/telnet/nhdpinfo%20json%20link", &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
+      fprintf(stderr, "[status-plugin] fetched telnet nhdpinfo link (%zu bytes)\n", tlen);
+      olsr_neighbors_raw = tmp; olnn = tlen;
+    } else { if (tmp) { fprintf(stderr, "[status-plugin] telnet nhdpinfo link failed or empty\n"); free(tmp); tmp = NULL; tlen = 0; } }
+    if ((!olsr_neighbors_raw || olnn == 0)) {
+      if (util_http_get_url_local("http://127.0.0.1:8000/telnet/nhdpinfo%20json%20neighbor", &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
+        fprintf(stderr, "[status-plugin] fetched telnet nhdpinfo neighbor (%zu bytes)\n", tlen);
+        olsr_neighbors_raw = tmp; olnn = tlen;
+      } else { if (tmp) { fprintf(stderr, "[status-plugin] telnet nhdpinfo neighbor failed or empty\n"); free(tmp); tmp = NULL; tlen = 0; } }
+    }
+  }
   char *olsr_routes_raw=NULL; size_t olr=0; if(util_http_get_url_local("http://127.0.0.1:9090/routes", &olsr_routes_raw, &olr, 1) != 0) { if(olsr_routes_raw){ free(olsr_routes_raw); olsr_routes_raw=NULL; } olr=0; }
   char *olsr_topology_raw=NULL; size_t olt=0; if(util_http_get_url_local("http://127.0.0.1:9090/topology", &olsr_topology_raw, &olt, 1) != 0) { if(olsr_topology_raw){ free(olsr_topology_raw); olsr_topology_raw=NULL; } olt=0; }
 
@@ -3948,6 +3984,18 @@ static int h_olsr_links(http_request_t *r) {
     for(const char **ep=eps; *ep && !links_raw; ++ep){ if(util_http_get_url_local(*ep, &links_raw, &ln, 1)==0 && links_raw && ln>0) break; if(links_raw){ free(links_raw); links_raw=NULL; ln=0; } }
   }
   char *neighbors_raw=NULL; size_t nnr=0; util_http_get_url_local("http://127.0.0.1:9090/neighbors", &neighbors_raw,&nnr, 1);
+  /* Telnet bridge fallbacks for olsrd2 (nhdpinfo) */
+  if (olsr2_on && (!neighbors_raw || nnr == 0)) {
+    char *tmp = NULL; size_t tlen = 0;
+    if (util_http_get_url_local("http://127.0.0.1:8000/telnet/nhdpinfo%20json%20link", &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
+      neighbors_raw = tmp; nnr = tlen;
+    } else { if (tmp) { free(tmp); tmp = NULL; tlen = 0; } }
+    if ((!neighbors_raw || nnr == 0)) {
+      if (util_http_get_url_local("http://127.0.0.1:8000/telnet/nhdpinfo%20json%20neighbor", &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
+        neighbors_raw = tmp; nnr = tlen;
+      } else { if (tmp) { free(tmp); tmp = NULL; tlen = 0; } }
+    }
+  }
   char *routes_raw=NULL; size_t rr=0; util_http_get_url_local("http://127.0.0.1:9090/routes", &routes_raw,&rr, 1);
   char *topology_raw=NULL; size_t tr=0; util_http_get_url_local("http://127.0.0.1:9090/topology", &topology_raw,&tr, 1);
   char *norm_links=NULL; size_t nlinks=0; {
@@ -3972,12 +4020,47 @@ static int h_olsr_links(http_request_t *r) {
     }
   }
   char *norm_neighbors=NULL; size_t nneigh=0; if(neighbors_raw && normalize_olsrd_neighbors(neighbors_raw,&norm_neighbors,&nneigh)!=0){ norm_neighbors=NULL; }
+  /* If olsr2 is present, attempt to fetch a small olsr2info payload (originator + neighbor_count) via telnet bridge */
+  char *olsr2info_json = NULL; size_t olsr2info_n = 0;
+  if (olsr2_on) {
+    char *orig_raw = NULL; size_t orig_n = 0;
+    /* prefer JSON originator endpoint when available */
+    if (util_http_get_url_local("http://127.0.0.1:8000/telnet/olsrv2info%20json%20originator", &orig_raw, &orig_n, 1) == 0 && orig_raw && orig_n>0) {
+      fprintf(stderr, "[status-plugin] fetched telnet olsrv2info originator (%zu bytes)\n", orig_n);
+      /* try to extract originator field */
+      char originator_v[128] = "";
+      char *p = strstr(orig_raw, "\"originator\"");
+      if (p) {
+        const char *q = strchr(p, ':'); if (q) { q++; while (*q && (*q==' '||*q=='\"')) q++; const char *e = q; while (*e && *e!='\"' && *e!=',' && *e!='}' && *e!='\n') e++; size_t L = e - q; if (L && L < sizeof(originator_v)) strncpy(originator_v, q, L);
+        }
+      } else {
+        /* fallback: plain text may contain ip:port on first line */
+        char *nl = strchr(orig_raw, '\n'); if (nl) *nl = 0; if (strchr(orig_raw, ':')) strncpy(originator_v, orig_raw, sizeof(originator_v)-1);
+      }
+      size_t neigh_count = 0;
+      if (norm_neighbors) {
+        const char *c = norm_neighbors; while ((c = strstr(c, "\"originator\"")) != NULL) { neigh_count++; c++; }
+      }
+      size_t bsz = 128 + strlen(originator_v);
+      olsr2info_json = malloc(bsz);
+      if (olsr2info_json) {
+        snprintf(olsr2info_json, bsz, "{\"originator\":\"%s\",\"neighbor_count\":%zu}", originator_v[0]?originator_v:"", neigh_count);
+        olsr2info_n = strlen(olsr2info_json);
+      }
+      free(orig_raw); orig_raw = NULL; orig_n = 0;
+    } else {
+      if (orig_raw) { free(orig_raw); orig_raw = NULL; }
+      fprintf(stderr, "[status-plugin] telnet olsrv2info originator endpoint not available or empty\n");
+    }
+  }
   /* Build JSON */
   char *buf=NULL; size_t cap=8192,len=0; buf=malloc(cap); if(!buf){ send_json(r,"{}\n"); goto done; } buf[0]=0;
   #define APP_O(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { if(buf){ free(buf);} send_json(r,"{}\n"); goto done; } } while(0)
   APP_O("{");
   APP_O("\"olsr2_on\":%s,", olsr2_on?"true":"false");
   APP_O("\"olsrd_on\":%s,", olsrd_on?"true":"false");
+  if (olsr2info_json) { APP_O("\"olsr2info\":%s,", olsr2info_json); free(olsr2info_json); olsr2info_json = NULL; olsr2info_n = 0; }
+  else { APP_O("\"olsr2info\":{},"); }
   if(norm_links) APP_O("\"links\":%s,", norm_links); else APP_O("\"links\":[],");
   if(norm_neighbors) APP_O("\"neighbors\":%s", norm_neighbors); else APP_O("\"neighbors\":[]");
   APP_O("}\n");
