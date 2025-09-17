@@ -3017,15 +3017,15 @@ static int h_status(http_request_t *r) {
    */
   if (olsr2_on && (!olsr_neighbors_raw || olnn == 0)) {
     char *tmp = NULL; size_t tlen = 0;
-    /* try telnet bridge endpoints exposed by some olsrd2 builds (prefer JSON) */
-    fprintf(stderr, "[status-plugin] olsr2 present, attempting telnet nhdpinfo endpoints\n");
+  /* try telnet bridge endpoints exposed by some olsrd2 builds (prefer JSON) */
+  if (g_log_buf_lines > 0) plugin_log_trace("telnet: olsr2 present, attempting telnet nhdpinfo endpoints");
     if (util_http_get_url_local("http://127.0.0.1:8000/telnet/nhdpinfo%20json%20link", &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
-      fprintf(stderr, "[status-plugin] fetched telnet nhdpinfo link (%zu bytes)\n", tlen);
+  if (g_log_buf_lines > 0) plugin_log_trace("telnet: fetched nhdpinfo link (%zu bytes)", tlen);
       olsr_neighbors_raw = tmp; olnn = tlen;
     } else { if (tmp) { fprintf(stderr, "[status-plugin] telnet nhdpinfo link failed or empty\n"); free(tmp); tmp = NULL; tlen = 0; } }
     if ((!olsr_neighbors_raw || olnn == 0)) {
       if (util_http_get_url_local("http://127.0.0.1:8000/telnet/nhdpinfo%20json%20neighbor", &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
-        fprintf(stderr, "[status-plugin] fetched telnet nhdpinfo neighbor (%zu bytes)\n", tlen);
+  if (g_log_buf_lines > 0) plugin_log_trace("telnet: fetched nhdpinfo neighbor (%zu bytes)", tlen);
         olsr_neighbors_raw = tmp; olnn = tlen;
       } else { if (tmp) { fprintf(stderr, "[status-plugin] telnet nhdpinfo neighbor failed or empty\n"); free(tmp); tmp = NULL; tlen = 0; } }
     }
@@ -4026,7 +4026,7 @@ static int h_olsr_links(http_request_t *r) {
     char *orig_raw = NULL; size_t orig_n = 0;
     /* prefer JSON originator endpoint when available */
     if (util_http_get_url_local("http://127.0.0.1:8000/telnet/olsrv2info%20json%20originator", &orig_raw, &orig_n, 1) == 0 && orig_raw && orig_n>0) {
-      fprintf(stderr, "[status-plugin] fetched telnet olsrv2info originator (%zu bytes)\n", orig_n);
+  if (g_log_buf_lines > 0) plugin_log_trace("telnet: fetched olsrv2info originator (%zu bytes)", orig_n);
       /* try to extract originator field */
       char originator_v[128] = "";
       char *p = strstr(orig_raw, "\"originator\"");
@@ -4048,9 +4048,9 @@ static int h_olsr_links(http_request_t *r) {
         olsr2info_n = strlen(olsr2info_json);
       }
       free(orig_raw); orig_raw = NULL; orig_n = 0;
-    } else {
+      } else {
       if (orig_raw) { free(orig_raw); orig_raw = NULL; }
-      fprintf(stderr, "[status-plugin] telnet olsrv2info originator endpoint not available or empty\n");
+  if (g_log_buf_lines > 0) plugin_log_trace("telnet: olsrv2info originator endpoint not available or empty");
     }
   }
   /* Build JSON */
