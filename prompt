@@ -1,10 +1,4 @@
-general rules:
-dont give me long answers, be concise;
-i need a summary of the topic to understand it quickly for the commit message;
-run if needed commands directly in the terminal;
-read files carefully and not partially;
-check scripts if the syntax is correct;
-do not use CDN scripts because we need to deliver the content locally without public internet;
-fix warnings/notes when there compiler informations about it!
+general rules to my questions and information about how to answer:
+be accurate;
 always check if the code is working before answering;
-its a good thing to compile locally here but, be aware that we will not use macos or windows, only linux which we compile on a separate VM with a container.
+Be concise; run needed terminal commands locally; read files fully; fix scripts and compiler warnings (do not change Makefile without my ok); avoid CDNs; i will verify build in a Linux/container environment before reporting; indicate whether to auto-commit fixes.
