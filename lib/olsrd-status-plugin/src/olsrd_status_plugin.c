@@ -3094,22 +3094,31 @@ static int h_status(http_request_t *r) {
 
   /* fetch links (for either implementation); do not toggle olsr2_on based on HTTP success */
   char *olsr_links_raw=NULL; size_t oln=0; {
-    const char *endpoints[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
-    for(const char **ep=endpoints; *ep && !olsr_links_raw; ++ep){
-      fprintf(stderr,"[status-plugin] trying OLSR endpoint: %s\n", *ep);
+    /* try both explicit /links endpoints and loose base endpoints which sometimes emit plain tables */
+    const char *endpoints[] = {
+      "http://127.0.0.1:9090/links",
+      "http://127.0.0.1:9090",
+      "http://127.0.0.1:2006/links",
+      "http://127.0.0.1:2006",
+      "http://127.0.0.1:8123/links",
+      "http://127.0.0.1:8123",
+      NULL
+    };
+    for (const char **ep = endpoints; *ep && !olsr_links_raw; ++ep) {
+      fprintf(stderr, "[status-plugin] trying OLSR endpoint: %s\n", *ep);
       if (strstr(*ep, "127.0.0.1") || strstr(*ep, "localhost")) {
         if (util_http_get_url_local(*ep, &olsr_links_raw, &oln, 1) == 0 && olsr_links_raw && oln > 0) {
-          fprintf(stderr,"[status-plugin] fetched OLSR links from %s (%zu bytes)\n", *ep, oln);
+          fprintf(stderr, "[status-plugin] fetched OLSR links from %s (%zu bytes)\n", *ep, oln);
           break;
         }
       } else {
-        char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep);
-        if(util_exec(cmd,&olsr_links_raw,&oln)==0 && olsr_links_raw && oln>0){
-          fprintf(stderr,"[status-plugin] fetched OLSR links from %s (%zu bytes)\n", *ep, oln);
+        char cmd[256]; snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 %s", *ep);
+        if (util_exec(cmd, &olsr_links_raw, &oln) == 0 && olsr_links_raw && oln > 0) {
+          fprintf(stderr, "[status-plugin] fetched OLSR links from %s (%zu bytes)\n", *ep, oln);
           break;
         }
       }
-      if(olsr_links_raw){ free(olsr_links_raw); olsr_links_raw=NULL; oln=0; }
+      if (olsr_links_raw) { free(olsr_links_raw); olsr_links_raw = NULL; oln = 0; }
     }
   }
 
@@ -3279,11 +3288,19 @@ static int h_status(http_request_t *r) {
       free(norm);
       if (combined_raw) { free(combined_raw); combined_raw=NULL; }
     } else {
-      APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", olsr_links_raw); APPEND(",");
+      /* attempt plain-text table fallback when JSON normalization failed */
+      char *plain_norm = NULL; size_t plain_n = 0;
+      if (normalize_olsrd_links_plain(olsr_links_raw, &plain_norm, &plain_n) == 0 && plain_norm && plain_n>0) {
+        APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", plain_norm); APPEND(",");
+        free(plain_norm);
+      } else {
+        APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", olsr_links_raw); APPEND(",");
+      }
       /* neighbors fallback: try neighbors data first, then links */
       char *nne2 = NULL; size_t nne2_n = 0;
       if ((olsr_neighbors_raw && olnn > 0 && normalize_olsrd_neighbors(olsr_neighbors_raw, &nne2, &nne2_n) == 0 && nne2 && nne2_n>0) ||
-          (normalize_olsrd_neighbors(olsr_links_raw, &nne2, &nne2_n) == 0 && nne2 && nne2_n>0)) {
+          (normalize_olsrd_neighbors(olsr_links_raw, &nne2, &nne2_n) == 0 && nne2 && nne2_n>0) ||
+          (normalize_olsrd_neighbors_plain(olsr_links_raw, &nne2, &nne2_n) == 0 && nne2 && nne2_n>0)) {
         APPEND("\"neighbors\":"); json_buf_append(&buf, &len, &cap, "%s", nne2); APPEND(","); free(nne2);
       } else {
         APPEND("\"neighbors\":[],");
@@ -3298,7 +3315,13 @@ static int h_status(http_request_t *r) {
       APPEND("\"neighbors\":"); json_buf_append(&buf, &len, &cap, "%s", nne3); APPEND(",");
       free(nne3);
     } else {
-      APPEND("\"neighbors\":[],");
+      /* try plain-text neighbors fallback */
+      char *nne_plain = NULL; size_t nne_plain_n = 0;
+      if (olsr_neighbors_raw && normalize_olsrd_neighbors_plain(olsr_neighbors_raw, &nne_plain, &nne_plain_n) == 0 && nne_plain && nne_plain_n>0) {
+        APPEND("\"neighbors\":"); json_buf_append(&buf, &len, &cap, "%s", nne_plain); APPEND(","); free(nne_plain);
+      } else {
+        APPEND("\"neighbors\":[],");
+      }
     }
   }
   APPEND("\"olsr2_on\":%s,", olsr2_on?"true":"false");
