@@ -2697,14 +2697,14 @@ static int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *o
 
   size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if(!buf) return -1; buf[0]=0;
   json_buf_append(&buf,&len,&cap,"["); int first = 1;
-  while (*line && *line != '\n' && *line == '\r') line++; /* skip CR */
+  while (*line && *line != '\n' && *line == '\r') { line++; } /* skip CR */
   while (*line && *line != '\0') {
     /* stop if next table or blank */
     if (strncmp(line, "Table:", 6) == 0) break;
     /* skip empty lines */
     const char *lnend = strchr(line,'\n'); if (!lnend) lnend = line + strlen(line);
     size_t lsz = (size_t)(lnend - line);
-    if (lsz == 0 || (lsz==1 && line[0]=='\r')) { line = (*lnend=='\n') ? lnend+1 : lnend; continue; }
+  if (lsz == 0 || (lsz==1 && line[0]=='\r')) { line = (*lnend=='\n') ? lnend+1 : lnend; continue; }
     /* split fields by whitespace/tab - expect at least local and remote */
     char *row = malloc(lsz+1); if (!row) break; memcpy(row, line, lsz); row[lsz]=0;
     char *s = row; while(*s && (*s==' '||*s=='\t')) s++;
@@ -2714,7 +2714,7 @@ static int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *o
     if (f >= 2) {
       char *local = fields[0]; char *remote = fields[1];
       char remote_host[512] = ""; if (remote[0]) { char rv[256]; if (resolve_ip_to_hostname(remote, rv, sizeof(rv))==0) snprintf(remote_host,sizeof(remote_host),"%s",rv); }
-    if (!first) json_buf_append(&buf,&len,&cap,","); first = 0;
+    if (!first) { json_buf_append(&buf,&len,&cap,","); } first = 0;
     /* Build object: {"intf":"","local":<local> ,"remote":<remote>,"remote_host":<host>, ... } */
     json_buf_append(&buf,&len,&cap,"{\"intf\":\"\",\"local\":"); json_append_escaped(&buf,&len,&cap,local);
     json_buf_append(&buf,&len,&cap,",\"remote\":"); json_append_escaped(&buf,&len,&cap,remote);
@@ -2723,7 +2723,7 @@ static int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *o
       json_buf_append(&buf,&len,&cap,",\"lq\":\"\",\"nlq\":\"\",\"cost\":\"\",\"routes\":\"0\",\"nodes\":\"0\",\"is_default\":false}");
     }
     free(row);
-    if (*lnend == '\0') break; line = lnend + 1;
+  if (*lnend == '\0') { break; } line = lnend + 1;
   }
   json_buf_append(&buf,&len,&cap,"]"); *outbuf = buf; *outlen = len; return 0;
 }
@@ -2739,7 +2739,7 @@ static int normalize_olsrd_neighbors_plain(const char *raw, char **outbuf, size_
   const char *line = tbl;
   while (*line && *line != '\n') line++;
   if (*line == '\n') line++; /* header */
-  while (*line && *line != '\n') line++; if (*line == '\n') line++;
+  while (*line && *line != '\n') { line++; } if (*line == '\n') { line++; }
 
   size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if(!buf) return -1; buf[0]=0;
   json_buf_append(&buf,&len,&cap,"["); int first = 1;
@@ -2755,13 +2755,13 @@ static int normalize_olsrd_neighbors_plain(const char *raw, char **outbuf, size_
     /* first field expected to be originator IP */
     if (f >= 1) {
       char *originator = fields[0]; char hostname[256]=""; lookup_hostname_cached(originator, hostname, sizeof(hostname));
-      if (!first) json_buf_append(&buf,&len,&cap,","); first = 0;
+  if (!first) { json_buf_append(&buf,&len,&cap,","); } first = 0;
   json_buf_append(&buf,&len,&cap,"{\"originator\":"); json_append_escaped(&buf,&len,&cap, originator); json_buf_append(&buf,&len,&cap,",");
   json_buf_append(&buf,&len,&cap,"\"bindto\":\"\",\"lq\":\"\",\"nlq\":\"\",\"cost\":\"\",\"metric\":\"\",\"hostname\":"); json_append_escaped(&buf,&len,&cap,hostname);
       json_buf_append(&buf,&len,&cap,"}");
     }
     free(row);
-    if (*lnend == '\0') break; line = lnend + 1;
+  if (*lnend == '\0') { break; } line = lnend + 1;
   }
   json_buf_append(&buf,&len,&cap,"]"); *outbuf = buf; *outlen = len; return 0;
 }
