@@ -2982,7 +2982,7 @@ static int h_status(http_request_t *r) {
   APPEND("\"fetch_auto_refresh_ms\":%d,", g_fetch_auto_refresh_ms);
 
 
-  int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
+  detect_olsr_processes(&olsrd_on,&olsr2_on);
   if(olsr2_on) fprintf(stderr,"[status-plugin] detected olsrd2 (robust)\n");
   if(olsrd_on) fprintf(stderr,"[status-plugin] detected olsrd (robust)\n");
   if(!olsrd_on && !olsr2_on) fprintf(stderr,"[status-plugin] no OLSR process detected (robust path)\n");
@@ -4021,7 +4021,7 @@ static int h_olsr_links(http_request_t *r) {
   }
   char *norm_neighbors=NULL; size_t nneigh=0; if(neighbors_raw && normalize_olsrd_neighbors(neighbors_raw,&norm_neighbors,&nneigh)!=0){ norm_neighbors=NULL; }
   /* If olsr2 is present, attempt to fetch a small olsr2info payload (originator + neighbor_count) via telnet bridge */
-  char *olsr2info_json = NULL; size_t olsr2info_n = 0;
+  char *olsr2info_json = NULL;
   if (olsr2_on) {
     char *orig_raw = NULL; size_t orig_n = 0;
     /* prefer JSON originator endpoint when available */
@@ -4045,7 +4045,6 @@ static int h_olsr_links(http_request_t *r) {
       olsr2info_json = malloc(bsz);
       if (olsr2info_json) {
         snprintf(olsr2info_json, bsz, "{\"originator\":\"%s\",\"neighbor_count\":%zu}", originator_v[0]?originator_v:"", neigh_count);
-        olsr2info_n = strlen(olsr2info_json);
       }
       free(orig_raw); orig_raw = NULL; orig_n = 0;
       } else {
@@ -4059,7 +4058,7 @@ static int h_olsr_links(http_request_t *r) {
   APP_O("{");
   APP_O("\"olsr2_on\":%s,", olsr2_on?"true":"false");
   APP_O("\"olsrd_on\":%s,", olsrd_on?"true":"false");
-  if (olsr2info_json) { APP_O("\"olsr2info\":%s,", olsr2info_json); free(olsr2info_json); olsr2info_json = NULL; olsr2info_n = 0; }
+  if (olsr2info_json) { APP_O("\"olsr2info\":%s,", olsr2info_json); free(olsr2info_json); olsr2info_json = NULL; }
   else { APP_O("\"olsr2info\":{},"); }
   if(norm_links) APP_O("\"links\":%s,", norm_links); else APP_O("\"links\":[],");
   if(norm_neighbors) APP_O("\"neighbors\":%s", norm_neighbors); else APP_O("\"neighbors\":[]");
