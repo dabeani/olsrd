@@ -155,14 +155,13 @@ LoadPlugin "lib/olsrd-status-plugin/build/olsrd_status.so.1.0"
 {
     PlParam "bind"       "0.0.0.0"
     PlParam "port"       "11080"
-    PlParam "enableipv6" "0"
     PlParam "assetroot"  "/usr/share/olsrd-status-plugin/www"
 }
 
 ## Plugin Parameters
 * `bind` – listen address (default 127.0.0.1 if not set).
 * `port` – TCP listen port (default 11080 shown above).
-* `enableipv6` – (placeholder) toggle IPv6 support future use.
+
 * `assetroot` – directory containing `www/` assets (index.html, CSS, JS).
 
 ## Environment overrides

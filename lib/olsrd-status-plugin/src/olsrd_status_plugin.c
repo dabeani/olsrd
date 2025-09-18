@@ -89,13 +89,7 @@ int g_is_linux_container = 0;
 
 static char   g_bind[64] = "0.0.0.0";
 static int    g_port = 11080;
-#if 0
-/* enable_ipv6 was removed: feature flag previously exposed as plugin parameter
- * 'enableipv6'. Kept disabled in-source to avoid accidental use; remove
- * this block entirely to drop the parameter and related JSON output.
- */
-static int    g_enable_ipv6 = 0;
-#endif
+/* enableipv6 parameter removed */
 static char   g_asset_root[512] = "/usr/share/olsrd-status-plugin/www";
 /* Flags to record whether a plugin parameter was supplied via PlParam
  * If set, configuration file values take precedence over environment vars.
