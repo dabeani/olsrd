@@ -597,6 +597,11 @@ static int json_appendf(char **bufptr, size_t *lenptr, size_t *capptr, const cha
   return 0;
 }
 
+
+/* Forward declarations for JSON buffer helpers used by various parsers */
+static int json_buf_append(char **bufptr, size_t *lenptr, size_t *capptr, const char *fmt, ...);
+static int json_append_escaped(char **bufptr, size_t *lenptr, size_t *capptr, const char *s);
+
 /*
  * Extract the first top-level JSON value (object or array) from a noisy input string.
  * Returns a newly allocated, NUL-terminated string containing the JSON value, or
@@ -1043,6 +1048,61 @@ static int h_status_ping(http_request_t *r);
 static int h_status_py(http_request_t *r);
 static int h_olsr_links(http_request_t *r); static int h_olsr_routes(http_request_t *r); static int h_olsr_raw(http_request_t *r);
 static int h_olsr_links_debug(http_request_t *r);
+/* Fallback parser: parse HTML table output for links */
+static int normalize_olsrd_links_html(const char *raw, char **outbuf, size_t *outlen) {
+  if (!raw || !outbuf || !outlen) return -1;
+  *outbuf = NULL; *outlen = 0;
+  const char *table = strstr(raw, "<table");
+  if (!table) return -1;
+  const char *table_end = strstr(table, "</table>");
+  if (!table_end) return -1;
+  const char *tr = strstr(table, "<tr");
+  if (!tr || tr > table_end) return -1;
+  // Skip header tr
+  tr = strstr(tr + 3, "<tr");
+  if (!tr || tr > table_end) return -1;
+  size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if(!buf) return -1; buf[0]=0;
+  json_appendf(&buf,&len,&cap,"["); int first = 1;
+  while (tr && tr < table_end) {
+    const char *tr_end = strstr(tr, "</tr>");
+    if (!tr_end || tr_end > table_end) break;
+    const char *td = strstr(tr, "<td");
+    if (!td || td > tr_end) { tr = strstr(tr_end, "<tr"); continue; }
+    char field_buf[16][256]; int f = 0;
+    while (td && td < tr_end && f < 16) {
+      const char *td_end = strstr(td, "</td>");
+      if (!td_end || td_end > tr_end) break;
+      const char *start = td;
+      while (*start && *start != '>') start++;
+      if (*start == '>') start++;
+      const char *end = td_end;
+      size_t tlen = end - start;
+      if (tlen >= sizeof(field_buf[0])) tlen = sizeof(field_buf[0]) - 1;
+      memcpy(field_buf[f], start, tlen);
+      field_buf[f][tlen] = 0;
+      // Trim
+      char *s = field_buf[f];
+      while (*s && (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r')) s++;
+      char *e = s + strlen(s) - 1;
+      while (e > s && (*e == ' ' || *e == '\t' || *e == '\n' || *e == '\r')) e--;
+      e[1] = 0;
+      f++;
+      td = strstr(td_end, "<td");
+    }
+    if (f >= 2) {
+      char *local = field_buf[0]; char *remote = field_buf[1];
+      char remote_host[512] = "";
+      if (remote[0]) { char rv[256]; if (resolve_ip_to_hostname(remote, rv, sizeof(rv))==0) snprintf(remote_host,sizeof(remote_host),"%s",rv); }
+  if (!first) { json_appendf(&buf,&len,&cap,","); } first = 0;
+  json_appendf(&buf,&len,&cap,"{\"intf\":\"\",\"local\":"); json_append_escaped(&buf,&len,&cap,local);
+  json_appendf(&buf,&len,&cap,",\"remote\":"); json_append_escaped(&buf,&len,&cap,remote);
+  json_appendf(&buf,&len,&cap,",\"remote_host\":"); json_append_escaped(&buf,&len,&cap,remote_host);
+  json_appendf(&buf,&len,&cap,",\"lq\":\"\",\"nlq\":\"\",\"cost\":\"\",\"routes\":\"0\",\"nodes\":\"0\",\"is_default\":false}");
+    }
+    tr = strstr(tr_end, "<tr");
+  }
+  json_appendf(&buf,&len,&cap,"]"); *outbuf = buf; *outlen = len; return 0;
+}
 static int h_olsrd_json(http_request_t *r); static int h_capabilities_local(http_request_t *r);
 static int h_txtinfo(http_request_t *r); static int h_jsoninfo(http_request_t *r); static int h_olsrd(http_request_t *r);
 static int h_discover(http_request_t *r); static int h_discover_ubnt(http_request_t *r); static int h_embedded_appjs(http_request_t *r); static int h_emb_jquery(http_request_t *r); static int h_emb_bootstrap(http_request_t *r);
@@ -2725,7 +2785,7 @@ static int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *o
     free(row);
   if (*lnend == '\0') { break; } line = lnend + 1;
   }
-  json_buf_append(&buf,&len,&cap,"]"); *outbuf = buf; *outlen = len; return 0;
+  json_appendf(&buf,&len,&cap,"]"); *outbuf = buf; *outlen = len; return 0;
 }
 
 /* Fallback parser: extract neighbors from plain-text 'Table: Neighbors' output
@@ -3094,14 +3154,12 @@ static int h_status(http_request_t *r) {
 
   /* fetch links (for either implementation); do not toggle olsr2_on based on HTTP success */
   char *olsr_links_raw=NULL; size_t oln=0; {
-    /* try both explicit /links endpoints and loose base endpoints which sometimes emit plain tables */
+    /* try base endpoints which may emit plain tables or HTML */
+    /* Probe the server root (no specific /links path). Some olsrd frontends expose links on the root */
     const char *endpoints[] = {
-      "http://127.0.0.1:9090/links",
-      "http://127.0.0.1:9090",
-      "http://127.0.0.1:2006/links",
-      "http://127.0.0.1:2006",
-      "http://127.0.0.1:8123/links",
-      "http://127.0.0.1:8123",
+      "http://127.0.0.1:9090/",
+      "http://127.0.0.1:2006/",
+      "http://127.0.0.1:8123/",
       NULL
     };
     for (const char **ep = endpoints; *ep && !olsr_links_raw; ++ep) {
@@ -3287,10 +3345,14 @@ static int h_status(http_request_t *r) {
       }
       free(norm);
       if (combined_raw) { free(combined_raw); combined_raw=NULL; }
-    } else {
+      } else {
       /* attempt plain-text table fallback when JSON normalization failed */
       char *plain_norm = NULL; size_t plain_n = 0;
       if (normalize_olsrd_links_plain(olsr_links_raw, &plain_norm, &plain_n) == 0 && plain_norm && plain_n>0) {
+        APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", plain_norm); APPEND(",");
+        free(plain_norm);
+      } else if (normalize_olsrd_links_html(olsr_links_raw, &plain_norm, &plain_n) == 0 && plain_norm && plain_n>0) {
+        /* Try HTML table parsing of root page */
         APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", plain_norm); APPEND(",");
         free(plain_norm);
       } else {
@@ -3338,7 +3400,7 @@ static int h_status(http_request_t *r) {
   {
     APPEND(",\"diagnostics\":{");
     /* endpoints probed earlier (try same list) */
-    const char *eps[] = { "http://127.0.0.1:9090/links", "http://127.0.0.1:2006/links", "http://127.0.0.1:8123/links", NULL };
+    const char *eps[] = { "http://127.0.0.1:9090", "http://127.0.0.1:2006", "http://127.0.0.1:8123", NULL };
     APPEND("\"olsrd_endpoints\":[");
     int first_ep = 1;
     for (const char **ep = eps; *ep; ++ep) {
@@ -3982,7 +4044,7 @@ static int h_status_stats(http_request_t *r) {
     char *links_raw = NULL; size_t lr = 0;
     char *routes_raw = NULL; size_t rr = 0;
     char *topology_raw = NULL; size_t tr = 0;
-    const char *link_eps[] = { "http://127.0.0.1:9090/links", "http://127.0.0.1:2006/links", "http://127.0.0.1:8123/links", NULL };
+    const char *link_eps[] = { "http://127.0.0.1:9090", "http://127.0.0.1:2006", "http://127.0.0.1:8123", NULL };
     const char *routes_eps[] = { "http://127.0.0.1:9090/routes", "http://127.0.0.1:2006/routes", "http://127.0.0.1:8123/routes", NULL };
     const char *topo_eps[] = { "http://127.0.0.1:9090/topology", "http://127.0.0.1:2006/topology", "http://127.0.0.1:8123/topology", NULL };
     for (const char **ep = link_eps; *ep && !links_raw; ++ep) {
@@ -4108,7 +4170,7 @@ static int h_olsr_links(http_request_t *r) {
   int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
   /* fetch links regardless of legacy vs v2 */
   char *links_raw=NULL; size_t ln=0; {
-    const char *eps[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
+    const char *eps[]={"http://127.0.0.1:9090/","http://127.0.0.1:2006/","http://127.0.0.1:8123/",NULL};
     for(const char **ep=eps; *ep && !links_raw; ++ep){ if(util_http_get_url_local(*ep, &links_raw, &ln, 1)==0 && links_raw && ln>0) break; if(links_raw){ free(links_raw); links_raw=NULL; ln=0; } }
   }
   char *neighbors_raw=NULL; size_t nnr=0; util_http_get_url_local("http://127.0.0.1:9090/neighbors", &neighbors_raw,&nnr, 1);
@@ -4211,7 +4273,7 @@ static int h_olsr_links_debug(http_request_t *r) {
 
 /* --- Debug raw OLSR data: /olsr/raw (NOT for production; helps diagnose node counting) --- */
 static int h_olsr_raw(http_request_t *r) {
-  char *links_raw=NULL; size_t ln=0; const char *eps_links[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
+  char *links_raw=NULL; size_t ln=0; const char *eps_links[]={"http://127.0.0.1:9090/","http://127.0.0.1:2006/","http://127.0.0.1:8123/",NULL};
   for(const char **ep=eps_links; *ep && !links_raw; ++ep){ if(util_http_get_url_local(*ep, &links_raw, &ln, 1)==0 && links_raw && ln>0) break; if(links_raw){ free(links_raw); links_raw=NULL; ln=0; } }
   char *routes_raw=NULL; size_t rr=0; const char *eps_routes[]={"http://127.0.0.1:9090/routes","http://127.0.0.1:2006/routes","http://127.0.0.1:8123/routes",NULL};
   for(const char **ep=eps_routes; *ep && !routes_raw; ++ep){ if(util_http_get_url_local(*ep, &routes_raw, &rr, 1)==0 && routes_raw && rr>0) break; if(routes_raw){ free(routes_raw); routes_raw=NULL; rr=0; } }
@@ -4259,7 +4321,7 @@ static int h_status_olsr(http_request_t *r) {
   APP2("\"default_route\":{"); APP2("\"ip\":"); json_append_escaped(&buf,&len,&cap,def_ip); APP2(",\"dev\":"); json_append_escaped(&buf,&len,&cap,def_dev); APP2("},");
   /* attempt OLSR links minimal (separate flags) */
   int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
-  char *olsr_links_raw=NULL; size_t oln=0; const char *eps[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
+  char *olsr_links_raw=NULL; size_t oln=0; const char *eps[]={"http://127.0.0.1:9090/","http://127.0.0.1:2006/","http://127.0.0.1:8123/",NULL};
   for(const char **ep=eps; *ep && !olsr_links_raw; ++ep){ if(util_http_get_url_local(*ep, &olsr_links_raw, &oln, 1)==0 && olsr_links_raw && oln>0) break; if(olsr_links_raw){ free(olsr_links_raw); olsr_links_raw=NULL; oln=0; } }
   /* also get routes & topology to enrich route/node counts like /olsr/links */
   char *routes_raw=NULL; size_t rr=0; util_http_get_url_local("http://127.0.0.1:9090/routes", &routes_raw,&rr, 1);
@@ -4268,7 +4330,7 @@ static int h_status_olsr(http_request_t *r) {
   APP2("\"olsrd_on\":%s,", olsrd_on?"true":"false");
   if(olsr_links_raw && oln>0){
     size_t l1=strlen(olsr_links_raw); size_t l2=routes_raw?strlen(routes_raw):0; size_t l3=topology_raw?strlen(topology_raw):0;
-    char *combined_raw=malloc(l1+l2+l3+8); if(combined_raw){ size_t off=0; memcpy(combined_raw+off,olsr_links_raw,l1); off+=l1; combined_raw[off++]='\n'; if(l2){ memcpy(combined_raw+off,routes_raw,l2); off+=l2; combined_raw[off++]='\n'; } if(l3){ memcpy(combined_raw+off,topology_raw,l3); off+=l3; } combined_raw[off]=0; char *norm=NULL; size_t nn=0; if(normalize_olsrd_links(combined_raw,&norm,&nn)==0 && norm){ APP2("\"links\":%s", norm); free(norm);} else { APP2("\"links\":[]"); } free(combined_raw);} else { APP2("\"links\":[]"); }
+    char *combined_raw=malloc(l1+l2+l3+8); if(combined_raw){ size_t off=0; memcpy(combined_raw+off,olsr_links_raw,l1); off+=l1; combined_raw[off++]='\n'; if(l2){ memcpy(combined_raw+off,routes_raw,l2); off+=l2; combined_raw[off++]='\n'; } if(l3){ memcpy(combined_raw+off,topology_raw,l3); off+=l3; } combined_raw[off]=0; char *norm=NULL; size_t nn=0; if(normalize_olsrd_links(combined_raw,&norm,&nn)==0 && norm){ APP2("\"links\":%s", norm); free(norm);} else if(normalize_olsrd_links_plain(combined_raw,&norm,&nn)==0 && norm){ APP2("\"links\":%s", norm); free(norm);} else if(normalize_olsrd_links_html(combined_raw,&norm,&nn)==0 && norm){ APP2("\"links\":%s", norm); free(norm);} else { fprintf(stderr, "[status-plugin] failed to parse OLSR links, raw content: %.500s...\n", combined_raw); APP2("\"links\":[]"); } free(combined_raw);} else { APP2("\"links\":[]"); }
   } else { APP2("\"links\":[]"); }
   APP2("}\n");
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); if(olsr_links_raw) free(olsr_links_raw); if(routes_raw) free(routes_raw); if(topology_raw) free(topology_raw); return 0; }
