@@ -89,7 +89,13 @@ int g_is_linux_container = 0;
 
 static char   g_bind[64] = "0.0.0.0";
 static int    g_port = 11080;
+#if 0
+/* enable_ipv6 was removed: feature flag previously exposed as plugin parameter
+ * 'enableipv6'. Kept disabled in-source to avoid accidental use; remove
+ * this block entirely to drop the parameter and related JSON output.
+ */
 static int    g_enable_ipv6 = 0;
+#endif
 static char   g_asset_root[512] = "/usr/share/olsrd-status-plugin/www";
 /* Flags to record whether a plugin parameter was supplied via PlParam
  * If set, configuration file values take precedence over environment vars.
@@ -4884,7 +4890,7 @@ static int h_diagnostics_json(http_request_t *r) {
 
     /* fetch queue length already computed as qlen above */
     if (json_appendf(&out, &outlen, &outcap, ",\"globals\":{") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
-  if (json_appendf(&out, &outlen, &outcap, "\"config\":{\"bind\":\"%s\",\"port\":%d,\"enable_ipv6\":%d,\"asset_root\":\"%s\"},", g_bind, g_port, g_enable_ipv6, g_asset_root) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  if (json_appendf(&out, &outlen, &outcap, "\"config\":{\"bind\":\"%s\",\"port\":%d,\"asset_root\":\"%s\"},", g_bind, g_port, g_asset_root) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
   if (json_appendf(&out, &outlen, &outcap, "\"fetch\":{\"queue_max\":%d,\"retries\":%d,\"backoff_initial\":%d,\"queue_warn\":%d,\"queue_crit\":%d,\"queue_length\":%d},", g_fetch_queue_max, g_fetch_retries, g_fetch_backoff_initial, g_fetch_queue_warn, g_fetch_queue_crit, qlen) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
   if (json_appendf(&out, &outlen, &outcap, "\"metrics\":{\"fetch_dropped\":%lu,\"fetch_retries\":%lu,\"fetch_successes\":%lu,\"unique_routes\":%lu,\"unique_nodes\":%lu},", d, rr, s, ur, un) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
   if (json_appendf(&out, &outlen, &outcap, "\"workers\":{\"fetch_worker_running\":%d,\"nodedb_worker_running\":%d,\"devices_worker_running\":%d},", g_fetch_worker_running, g_nodedb_worker_running, g_devices_worker_running) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
@@ -5292,7 +5298,6 @@ static int set_net_param(const char *value, void *data __attribute__((unused)), 
 static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "bind",       .set_plugin_parameter = &set_str_param, .data = g_bind,        .addon = {0} },
   { .name = "port",       .set_plugin_parameter = &set_int_param, .data = &g_port,       .addon = {0} },
-  { .name = "enableipv6", .set_plugin_parameter = &set_int_param, .data = &g_enable_ipv6,.addon = {0} },
   { .name = "Net",        .set_plugin_parameter = &set_net_param, .data = NULL,          .addon = {0} },
   { .name = "assetroot",  .set_plugin_parameter = &set_str_param, .data = g_asset_root,  .addon = {0} },
   { .name = "nodedb_url", .set_plugin_parameter = &set_str_param, .data = g_nodedb_url,  .addon = {0} },
