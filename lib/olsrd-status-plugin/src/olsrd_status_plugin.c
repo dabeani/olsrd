@@ -2878,10 +2878,17 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
 
   /* If a process is running but the binary path couldn't be detected (e.g. different mount
    * namespace or custom location), treat the running state as evidence that the binary
-   * exists so the UI reflects reality.
+   * exists so the UI reflects reality. Also set a placeholder path so callers that
+   * inspect the path string get a useful value instead of an empty string.
    */
-  if (olsrd_on) olsrd_exists = 1;
-  if (olsr2_on) olsr2_exists = 1;
+  if (olsrd_on) {
+    olsrd_exists = 1;
+    if (!olsrd_path[0]) strncpy(olsrd_path, "(running)", sizeof(olsrd_path)-1);
+  }
+  if (olsr2_on) {
+    olsr2_exists = 1;
+    if (!olsr2_path[0]) strncpy(olsr2_path, "(running)", sizeof(olsr2_path)-1);
+  }
 
   /* autoupdate wizard info */
   const char *au_path = "/etc/cron.daily/autoupdatewizards";
@@ -3857,8 +3864,14 @@ static int h_status_lite(http_request_t *r) {
   for (const char **p = lite_olsr2_candidates; *p; ++p) {
     if (path_exists(*p)) { strncpy(lite_olsr2_path, *p, sizeof(lite_olsr2_path)-1); lite_olsr2_exists = 1; break; }
   }
-  if (lite_olsrd_on) lite_olsrd_exists = 1;
-  if (lite_olsr2_on) lite_olsr2_exists = 1;
+  if (lite_olsrd_on) {
+    lite_olsrd_exists = 1;
+    if (!lite_olsrd_path[0]) strncpy(lite_olsrd_path, "(running)", sizeof(lite_olsrd_path)-1);
+  }
+  if (lite_olsr2_on) {
+    lite_olsr2_exists = 1;
+    if (!lite_olsr2_path[0]) strncpy(lite_olsr2_path, "(running)", sizeof(lite_olsr2_path)-1);
+  }
   APP_L("\"olsr2_on\":%s,\"olsrd_on\":%s,\"olsrd_exists\":%s,\"olsr2_exists\":%s", lite_olsr2_on?"true":"false", lite_olsrd_on?"true":"false", lite_olsrd_exists?"true":"false", lite_olsr2_exists?"true":"false");
   APP_L("}\n");
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); return 0;
