@@ -2854,11 +2854,17 @@ static int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *o
       json_buf_append(&buf,&len,&cap,",\"routes\":\"0\",\"nodes\":\"0\",\"is_default\":false}");
     }
     free(row);
-    if (*lnend == '\0') break; p = lnend + 1;
+    if (*lnend == '\0') {
+      break;
+    }
+    p = lnend + 1;
   }
 
-  json_appendf(&buf,&len,&cap,"]"); *outbuf = buf; *outlen = len;
-  if (hdr) free(hdr); if (tmp) free(tmp);
+  json_appendf(&buf,&len,&cap,"]");
+  *outbuf = buf;
+  *outlen = len;
+  if (hdr) free(hdr);
+  if (tmp) free(tmp);
   return 0;
 }
 
