@@ -2776,9 +2776,7 @@ static int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *o
     while(tok && f < (int)(sizeof(fields)/sizeof(fields[0]))) { fields[f++] = tok; tok = strtok(NULL, " \t"); }
     if (f >= 2) {
       char *local = fields[0]; char *remote = fields[1];
-      /* strip simple HTML tags if present (e.g. <a href=...>IP</a>) */
-      char *clean_field = NULL;
-      auto_strip_html:
+  /* strip simple HTML tags if present (e.g. <a href=...>IP</a>) */
       do {
         /* strip tags from local */
         char *pstart = strchr(local, '>');
