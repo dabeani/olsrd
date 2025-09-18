@@ -2742,6 +2742,26 @@ static int normalize_olsrd_neighbors(const char *raw, char **outbuf, size_t *out
 /* Fallback parser: parse plain-text 'Table: Links' output produced by some olsrd/http frontends.
  * Produces same normalized JSON array as normalize_olsrd_links would.
  */
+/* Helper: strip simple HTML tags and trim whitespace from both ends of a string.
+ * Keeps inner text for patterns like <a>text</a> and cuts at the first '<' if no closing tag.
+ */
+static void strip_tags_and_trim(char *s) {
+  if (!s || !s[0]) return;
+  char *pstart = strchr(s, '>');
+  if (pstart) {
+    pstart++;
+    char *pend = strchr(pstart, '<');
+    if (pend) *pend = '\0';
+    memmove(s, pstart, strlen(pstart) + 1);
+  } else {
+    char *lt = strchr(s, '<'); if (lt) *lt = '\0';
+  }
+  /* left trim */
+  while (*s && isspace((unsigned char)*s)) memmove(s, s+1, strlen(s));
+  /* right trim */
+  char *t = s + strlen(s) - 1; while (t >= s && isspace((unsigned char)*t)) { *t = '\0'; t--; }
+}
+
 static int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen) {
   if (!raw || !outbuf || !outlen) return -1;
   *outbuf = NULL; *outlen = 0;
@@ -2812,15 +2832,13 @@ static int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *o
       cost = (idx_cost >= 0 && idx_cost < f) ? fields[idx_cost] : "";
       intf = (idx_intf >= 0 && idx_intf < f) ? fields[idx_intf] : "";
 
-      /* strip simple HTML tags if present (e.g. <a>IP</a>) */
-      #define STRIP_TAGS(X) do { char *pstart = strchr((X), '>'); if (pstart) { pstart++; char *pend = strchr(pstart, '<'); if (pend) *pend = '\0'; memmove((X), pstart, strlen(pstart)+1); } else { char *lt = strchr((X), '<'); if (lt) *lt = '\0'; } while (*(X) && isspace((unsigned char)*(X))) memmove((X), (X)+1, strlen((X))); char *_t = (X) + strlen((X))-1; while (_t >= (X) && isspace((unsigned char)*_t)) { *_t = '\0'; _t--; } } while(0)
-
-      STRIP_TAGS(local);
-      STRIP_TAGS(remote);
-      STRIP_TAGS(lq);
-      STRIP_TAGS(nlq);
-      STRIP_TAGS(cost);
-      STRIP_TAGS(intf);
+  /* strip simple HTML tags and trim whitespace */
+  strip_tags_and_trim(local);
+  strip_tags_and_trim(remote);
+  strip_tags_and_trim(lq);
+  strip_tags_and_trim(nlq);
+  strip_tags_and_trim(cost);
+  strip_tags_and_trim(intf);
 
       char remote_host[512] = ""; if (remote && remote[0]) { char rv[256]; if (resolve_ip_to_hostname(remote, rv, sizeof(rv))==0) snprintf(remote_host,sizeof(remote_host),"%s",rv); }
 
