@@ -2866,8 +2866,9 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
   int olsr2_exists = 0;
   char olsrd_path[256] = "";
   char olsr2_path[256] = "";
-  const char *olsrd_candidates[] = { "/usr/sbin/olsrd", "/usr/bin/olsrd", "/sbin/olsrd", NULL };
-  const char *olsr2_candidates[] = { "/usr/sbin/olsrd2", "/usr/bin/olsrd2", "/sbin/olsrd2", NULL };
+  /* Include common /config paths used on devices where binaries live under /config */
+  const char *olsrd_candidates[] = { "/usr/sbin/olsrd", "/usr/bin/olsrd", "/sbin/olsrd", "/config/olsrd/olsrd", NULL };
+  const char *olsr2_candidates[] = { "/usr/sbin/olsrd2", "/usr/bin/olsrd2", "/sbin/olsrd2", "/config/olsrd2/olsrd2", NULL };
   for (const char **p = olsrd_candidates; *p; ++p) {
     if (path_exists(*p)) { strncpy(olsrd_path, *p, sizeof(olsrd_path)-1); olsrd_exists = 1; break; }
   }
@@ -3841,8 +3842,8 @@ static int h_status_lite(http_request_t *r) {
   int lite_olsr2_exists = 0;
   char lite_olsrd_path[256] = "";
   char lite_olsr2_path[256] = "";
-  const char *lite_olsrd_candidates[] = { "/usr/sbin/olsrd", "/usr/bin/olsrd", "/sbin/olsrd", NULL };
-  const char *lite_olsr2_candidates[] = { "/usr/sbin/olsrd2", "/usr/bin/olsrd2", "/sbin/olsrd2", NULL };
+  const char *lite_olsrd_candidates[] = { "/usr/sbin/olsrd", "/usr/bin/olsrd", "/sbin/olsrd", "/config/olsrd/olsrd", NULL };
+  const char *lite_olsr2_candidates[] = { "/usr/sbin/olsrd2", "/usr/bin/olsrd2", "/sbin/olsrd2", "/config/olsrd2/olsrd2", NULL };
   for (const char **p = lite_olsrd_candidates; *p; ++p) {
     if (path_exists(*p)) { strncpy(lite_olsrd_path, *p, sizeof(lite_olsrd_path)-1); lite_olsrd_exists = 1; break; }
   }
