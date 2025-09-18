@@ -2757,7 +2757,8 @@ static int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *o
 
   size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if(!buf) return -1; buf[0]=0;
   json_buf_append(&buf,&len,&cap,"["); int first = 1;
-  while (*line && *line != '\n' && *line == '\r') { line++; } /* skip CR */
+  /* skip any leading CR on the current line */
+  while (*line && (*line == '\r')) { line++; }
   while (*line && *line != '\0') {
     /* stop if next table or blank */
     if (strncmp(line, "Table:", 6) == 0) break;
@@ -2766,13 +2767,38 @@ static int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *o
     size_t lsz = (size_t)(lnend - line);
   if (lsz == 0 || (lsz==1 && line[0]=='\r')) { line = (*lnend=='\n') ? lnend+1 : lnend; continue; }
     /* split fields by whitespace/tab - expect at least local and remote */
-    char *row = malloc(lsz+1); if (!row) break; memcpy(row, line, lsz); row[lsz]=0;
+  char *row = malloc(lsz+1); if (!row) break; memcpy(row, line, lsz); row[lsz]=0;
+  /* trim trailing CR/LF from the extracted row (some servers use CRLF) */
+  while (lsz > 0 && (row[lsz-1] == '\r' || row[lsz-1] == '\n')) { row[--lsz] = '\0'; }
     char *s = row; while(*s && (*s==' '||*s=='\t')) s++;
     /* tokenize */
     char *fields[16]; int f=0; char *tok = strtok(s, " \t");
     while(tok && f < (int)(sizeof(fields)/sizeof(fields[0]))) { fields[f++] = tok; tok = strtok(NULL, " \t"); }
     if (f >= 2) {
       char *local = fields[0]; char *remote = fields[1];
+      /* strip simple HTML tags if present (e.g. <a href=...>IP</a>) */
+      char *clean_field = NULL;
+      auto_strip_html:
+      do {
+        /* strip tags from local */
+        char *pstart = strchr(local, '>');
+        if (pstart) {
+          pstart++; char *pend = strchr(pstart, '<'); if (pend) *pend = '\0'; memmove(local, pstart, strlen(pstart)+1);
+        } else {
+          /* remove any leading '<' part */
+          char *lt = strchr(local, '<'); if (lt) { *lt = '\0'; }
+        }
+        /* strip tags from remote */
+        pstart = strchr(remote, '>');
+        if (pstart) {
+          pstart++; char *pend = strchr(pstart, '<'); if (pend) *pend = '\0'; memmove(remote, pstart, strlen(pstart)+1);
+        } else {
+          char *lt = strchr(remote, '<'); if (lt) { *lt = '\0'; }
+        }
+        /* remove surrounding whitespace after cleaning */
+        while (*local && (*local == ' ' || *local == '\t')) local++;
+        while (*remote && (*remote == ' ' || *remote == '\t')) remote++;
+      } while (0);
       char remote_host[512] = ""; if (remote[0]) { char rv[256]; if (resolve_ip_to_hostname(remote, rv, sizeof(rv))==0) snprintf(remote_host,sizeof(remote_host),"%s",rv); }
     if (!first) { json_buf_append(&buf,&len,&cap,","); } first = 0;
     /* Build object: {"intf":"","local":<local> ,"remote":<remote>,"remote_host":<host>, ... } */
