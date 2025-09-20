@@ -430,25 +430,37 @@ static void *connection_worker(void *arg) {
     fprintf(stderr, "[httpd][debug] request: %s %s from %s\n", r->method, r->path, r->client_ip);
   }
 
+  /* DEBUG: Add immediate debug print after request logging */
+  fprintf(stderr, "[httpd] DEBUG: REQUEST PROCESSED - path='%s' method='%s'\n", r->path, r->method);
+  fflush(stderr);
+
   /* Enforce allow-list even for static assets */
   fprintf(stderr, "[httpd] DEBUG: checking client allow-list for %s\n", r->client_ip);
+  fflush(stderr);
   if (!http_is_client_allowed(r->client_ip)) { if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r->client_ip, r->path); struct linger _lg = {1, 0}; setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg, sizeof(_lg)); close(cfd); http_request_free(r); return NULL; }
   fprintf(stderr, "[httpd] DEBUG: client allowed, checking static assets\n");
+  fflush(stderr);
   if (starts_with(r->path, "/css/") || starts_with(r->path, "/js/") || starts_with(r->path, "/fonts/")) { if (g_log_access) fprintf(stderr, "[httpd] static asset request: %s (serve from %s)\n", r->path, g_asset_root); http_send_file(r, g_asset_root, r->path+1, NULL); close(cfd); http_request_free(r); return NULL; }
   fprintf(stderr, "[httpd] DEBUG: not static asset, dispatching to handlers\n");
+  fflush(stderr);
   /* dispatch to registered handlers */
   http_handler_node_t *nptr = g_handlers;
   int handled = 0;
   fprintf(stderr, "[httpd] DEBUG: starting handler dispatch loop\n");
+  fflush(stderr);
   while (nptr) {
     fprintf(stderr, "[httpd] DEBUG: checking handler for route '%s' against path '%s'\n", nptr->route, r->path);
+    fflush(stderr);
     if (strcmp(nptr->route, r->path) == 0) {
       fprintf(stderr, "[httpd] DEBUG: found matching handler, calling it\n");
+      fflush(stderr);
       handled = 1;
       if (!http_is_client_allowed(r->client_ip)) { if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r->client_ip, nptr->route); struct linger _lg2 = {1,0}; setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg2, sizeof(_lg2)); close(cfd); http_request_free(r); return NULL; }
       fprintf(stderr, "[httpd] DEBUG: calling handler function %p\n", (void*)nptr->fn);
+      fflush(stderr);
       nptr->fn(r);
       fprintf(stderr, "[httpd] DEBUG: handler returned\n");
+      fflush(stderr);
       break;
     }
     nptr = nptr->next;
