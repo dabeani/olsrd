@@ -458,24 +458,40 @@ static void *connection_worker(void *arg) {
     fprintf(stderr, "[httpd] DEBUG: first handler route='%s' fn=%p\n", g_handlers->route, (void*)g_handlers->fn);
     fflush(stderr);
   }
+  int handler_count = 0;
   while (nptr) {
-    fprintf(stderr, "[httpd] DEBUG: nptr=%p, nptr->route='%s', nptr->fn=%p, r->path='%s'\n", 
-            (void*)nptr, nptr->route, (void*)nptr->fn, r->path);
+    handler_count++;
+    fprintf(stderr, "[httpd] DEBUG: handler %d: nptr=%p, route='%s', fn=%p, r->path='%s'\n", 
+            handler_count, (void*)nptr, nptr->route[0] ? nptr->route : "(null)", (void*)nptr->fn, r->path);
     fflush(stderr);
-    if (strcmp(nptr->route, r->path) == 0) {
-      fprintf(stderr, "[httpd] DEBUG: found matching handler, calling it\n");
+    if (nptr->route[0] && strcmp(nptr->route, r->path) == 0) {
+      fprintf(stderr, "[httpd] DEBUG: found matching handler for '%s', calling it\n", r->path);
       fflush(stderr);
       handled = 1;
-      if (!http_is_client_allowed(r->client_ip)) { if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r->client_ip, nptr->route); struct linger _lg2 = {1,0}; setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg2, sizeof(_lg2)); close(cfd); http_request_free(r); return NULL; }
-      fprintf(stderr, "[httpd] DEBUG: calling handler function %p\n", (void*)nptr->fn);
+      if (!http_is_client_allowed(r->client_ip)) { 
+        if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r->client_ip, nptr->route); 
+        struct linger _lg2 = {1,0}; 
+        setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg2, sizeof(_lg2)); 
+        close(cfd); 
+        http_request_free(r); 
+        return NULL; 
+      }
+      fprintf(stderr, "[httpd] DEBUG: calling handler function %p for route '%s'\n", (void*)nptr->fn, nptr->route);
       fflush(stderr);
       nptr->fn(r);
       fprintf(stderr, "[httpd] DEBUG: handler returned\n");
       fflush(stderr);
       break;
     }
+    if (!nptr->next) {
+      fprintf(stderr, "[httpd] DEBUG: reached end of handler list (nptr->next is NULL)\n");
+      fflush(stderr);
+      break;
+    }
     nptr = nptr->next;
   }
+  fprintf(stderr, "[httpd] DEBUG: handler dispatch completed, checked %d handlers, handled=%d\n", handler_count, handled);
+  fflush(stderr);
   if (!handled) {
     if (g_log_access) fprintf(stderr, "[httpd] 404 Not Found: %s\n", r->path);
     http_send_status(r, 404, "Not Found");
