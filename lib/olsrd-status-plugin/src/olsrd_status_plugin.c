@@ -4080,48 +4080,77 @@ static int h_devices_json(http_request_t *r) {
           int need_tx = (aggs[ai].tx_rate[0] == '\0');
           int need_rx = (aggs[ai].rx_rate[0] == '\0');
           if (!need_signal && !need_tx && !need_rx) continue;
+
           /* try lookup by IPs first */
-          const char *ips = aggs[ai].ips; const char *ipcur = ips;
-          char ipbuf[64]; int found_any = 0;
+          const char *ips = aggs[ai].ips;
+          const char *ipcur = ips;
+          char ipbuf[64];
+
           while (ipcur && *ipcur) {
+            /* skip leading spaces */
             while (*ipcur && isspace((unsigned char)*ipcur)) ipcur++;
             const char *ipend = ipcur;
-            while (ipend && *ipend && *ipend != ',') ipend++;
+            while (*ipend && *ipend != ',') ipend++;
+
             size_t il = (size_t)(ipend - ipcur);
-            if (il >= sizeof(ipbuf)) il = sizeof(ipbuf)-1;
-            if (il > 0) { memcpy(ipbuf, ipcur, il); ipbuf[il]=0; /* trim */ size_t t = il; while (t>0 && isspace((unsigned char)ipbuf[t-1])) ipbuf[--t]=0; }
-            else ipbuf[0]=0;
+            if (il >= sizeof(ipbuf)) il = sizeof(ipbuf) - 1;
+            if (il > 0) {
+              memcpy(ipbuf, ipcur, il);
+              ipbuf[il] = '\0';
+              /* trim trailing whitespace */
+              size_t t = il;
+              while (t > 0 && isspace((unsigned char)ipbuf[t - 1])) ipbuf[--t] = '\0';
+            } else {
+              ipbuf[0] = '\0';
+            }
+
             if (ipbuf[0]) {
-              airos_station_t st; if (airos_lookup_by_ip(ipbuf, &st) == 0) {
-                if (st.valid) {
-                  if (need_tx && st.tx[0]) { snprintf(aggs[ai].tx_rate, sizeof(aggs[ai].tx_rate), "%s", st.tx); need_tx = 0; }
-                  if (need_rx && st.rx[0]) { snprintf(aggs[ai].rx_rate, sizeof(aggs[ai].rx_rate), "%s", st.rx); need_rx = 0; }
-                  if (need_signal && st.signal[0]) { snprintf(aggs[ai].signal, sizeof(aggs[ai].signal), "%s", st.signal); need_signal = 0; }
-                  found_any = 1;
-                }
+              airos_station_t st;
+              if (airos_lookup_by_ip(ipbuf, &st) == 0 && st.valid) {
+                if (need_tx && st.tx[0]) { snprintf(aggs[ai].tx_rate, sizeof(aggs[ai].tx_rate), "%s", st.tx); need_tx = 0; }
+                if (need_rx && st.rx[0]) { snprintf(aggs[ai].rx_rate, sizeof(aggs[ai].rx_rate), "%s", st.rx); need_rx = 0; }
+                if (need_signal && st.signal[0]) { snprintf(aggs[ai].signal, sizeof(aggs[ai].signal), "%s", st.signal); need_signal = 0; }
               }
             }
+
             if (ipend && *ipend == ',') ipcur = ipend + 1; else break;
             if (!need_signal && !need_tx && !need_rx) break;
           }
+
           /* fallback: try lookup by MACs */
           if ((need_signal || need_tx || need_rx) && aggs[ai].hw[0]) {
-            char hwcopy[512]; hwcopy[0]=0; strncpy(hwcopy, aggs[ai].hw, sizeof(hwcopy)-1); hwcopy[sizeof(hwcopy)-1]=0;
+            char hwcopy[512];
+            hwcopy[0] = '\0';
+            strncpy(hwcopy, aggs[ai].hw, sizeof(hwcopy) - 1);
+            hwcopy[sizeof(hwcopy) - 1] = '\0';
+
             char *hwcur = hwcopy;
             while (hwcur && *hwcur) {
               while (*hwcur && isspace((unsigned char)*hwcur)) hwcur++;
-              char *hwend = hwcur; while (*hwend && *hwend != ',') hwend++;
-              char mactok[64]; size_t mlen = (size_t)(hwend - hwcur); if (mlen >= sizeof(mactok)) mlen = sizeof(mactok)-1; if (mlen>0) { memcpy(mactok, hwcur, mlen); mactok[mlen]=0; size_t tt = mlen; while (tt>0 && isspace((unsigned char)mactok[tt-1])) mactok[--tt]=0; } else mactok[0]=0;
+              char *hwend = hwcur;
+              while (*hwend && *hwend != ',') hwend++;
+
+              char mactok[64];
+              size_t mlen = (size_t)(hwend - hwcur);
+              if (mlen >= sizeof(mactok)) mlen = sizeof(mactok) - 1;
+              if (mlen > 0) {
+                memcpy(mactok, hwcur, mlen);
+                mactok[mlen] = '\0';
+                size_t tt = mlen;
+                while (tt > 0 && isspace((unsigned char)mactok[tt - 1])) mactok[--tt] = '\0';
+              } else {
+                mactok[0] = '\0';
+              }
+
               if (mactok[0]) {
-                airos_station_t st; if (airos_lookup_by_mac(mactok, &st) == 0) {
-                  if (st.valid) {
-                    if (need_tx && st.tx[0]) { snprintf(aggs[ai].tx_rate, sizeof(aggs[ai].tx_rate), "%s", st.tx); need_tx = 0; }
-                    if (need_rx && st.rx[0]) { snprintf(aggs[ai].rx_rate, sizeof(aggs[ai].rx_rate), "%s", st.rx); need_rx = 0; }
-                    if (need_signal && st.signal[0]) { snprintf(aggs[ai].signal, sizeof(aggs[ai].signal), "%s", st.signal); need_signal = 0; }
-                    found_any = 1;
-                  }
+                airos_station_t st;
+                if (airos_lookup_by_mac(mactok, &st) == 0 && st.valid) {
+                  if (need_tx && st.tx[0]) { snprintf(aggs[ai].tx_rate, sizeof(aggs[ai].tx_rate), "%s", st.tx); need_tx = 0; }
+                  if (need_rx && st.rx[0]) { snprintf(aggs[ai].rx_rate, sizeof(aggs[ai].rx_rate), "%s", st.rx); need_rx = 0; }
+                  if (need_signal && st.signal[0]) { snprintf(aggs[ai].signal, sizeof(aggs[ai].signal), "%s", st.signal); need_signal = 0; }
                 }
               }
+
               if (*hwend == ',') hwcur = hwend + 1; else break;
               if (!need_signal && !need_tx && !need_rx) break;
             }
