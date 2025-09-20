@@ -4622,6 +4622,18 @@ static int h_nodedb(http_request_t *r) {
   fetch_remote_nodedb_if_needed();
   pthread_mutex_lock(&g_nodedb_lock);
   if (g_nodedb_cached && g_nodedb_cached_len>0) {
+    /* Optional debug: when enabled via env var, print cache diagnostics to stderr
+     * This helps when debugging live containers without changing normal behaviour.
+     */
+    const char *dbg = getenv("OLSRD_STATUS_DEBUG_NODEDB");
+    if (dbg && dbg[0]=='1') {
+      fprintf(stderr, "[status-plugin][debug] h_nodedb: cached_len=%zu last_fetch=%ld ETag=" "%zx-%ld\n", g_nodedb_cached_len, (long)g_nodedb_last_fetch, g_nodedb_cached_len, g_nodedb_last_fetch);
+      /* print first up to 64 bytes in hex to aid quick inspection */
+      size_t preview = g_nodedb_cached_len < 64 ? g_nodedb_cached_len : 64;
+      fprintf(stderr, "[status-plugin][debug] h_nodedb: preview=");
+      for (size_t i = 0; i < preview; ++i) fprintf(stderr, "%02x", (unsigned char)g_nodedb_cached[i]);
+      fprintf(stderr, "\n");
+    }
   /* Add basic caching headers to reduce client revalidation frequency */
   http_send_status(r,200,"OK");
   http_printf(r,"Content-Type: application/json; charset=utf-8\r\n");
