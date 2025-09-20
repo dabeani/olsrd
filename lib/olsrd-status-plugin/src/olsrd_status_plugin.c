@@ -4175,6 +4175,15 @@ static int h_olsr_links(http_request_t *r) {
         if (l3){ memcpy(combined_raw+off,topology_raw,l3); off+=l3; }
         combined_raw[off]=0;
         if(normalize_olsrd_links(combined_raw,&norm_links,&nlinks)!=0){ norm_links=NULL; }
+        /* If JSON normalization produced no entries (empty array or zero-length),
+         * attempt plain-text parsing fallback which some devices expose.
+         */
+        if ((nlinks == 0) || (norm_links && strcmp(norm_links, "[]") == 0)) {
+          if (norm_links) { free(norm_links); norm_links = NULL; nlinks = 0; }
+          if (normalize_olsrd_links_plain(combined_raw, &norm_links, &nlinks) != 0) {
+            if (norm_links) { free(norm_links); norm_links = NULL; nlinks = 0; }
+          }
+        }
         free(combined_raw);
       }
     } else if (total) {
