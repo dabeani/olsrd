@@ -469,40 +469,44 @@ static void *connection_worker(void *arg) {
   int handled = 0;
   fprintf(stderr, "[httpd] DEBUG: starting handler dispatch loop, g_handlers=%p (count=%d)\n", (void*)g_handlers, handler_count);
   fflush(stderr);
-  http_handler_node_t **snapshot = NULL;
+  /* Create a safe snapshot by copying route and fn into a local buffer while holding the lock. This
+   * prevents dereferencing handler nodes after they may have been freed by other threads. */
+  struct handler_entry { char route[64]; http_handler_fn fn; } *snapshot = NULL;
   if (handler_count > 0) {
     snapshot = calloc((size_t)handler_count, sizeof(*snapshot));
     if (snapshot) {
       int idx = 0; http_handler_node_t *it = g_handlers;
-      while (it && idx < handler_count) { snapshot[idx++] = it; it = it->next; }
-      /* Adjust handler_count to actual copied length */
+      while (it && idx < handler_count) {
+        /* copy route and function pointer */
+        strncpy(snapshot[idx].route, it->route, sizeof(snapshot[idx].route)-1);
+        snapshot[idx].route[sizeof(snapshot[idx].route)-1] = '\0';
+        snapshot[idx].fn = it->fn;
+        idx++; it = it->next;
+      }
       handler_count = idx;
     } else {
-      /* allocation failed; fallback to iterating under lock */
       fprintf(stderr, "[httpd] DEBUG: snapshot allocation failed, will iterate under lock\n"); fflush(stderr);
-      /* fall through to old behavior below by leaving snapshot==NULL */
     }
   }
   /* release lock before calling handlers if we have a safe snapshot */
   if (snapshot) pthread_mutex_unlock(&g_handlers_lock);
   if (snapshot) {
     for (int i = 0; i < handler_count; ++i) {
-      http_handler_node_t *node = snapshot[i];
-      fprintf(stderr, "[httpd] DEBUG: checking handler %d: node=%p next=%p route='%s' fn=%p\n",
-              i+1, (void*)node, (void*)(node?node->next:NULL), node?node->route:"<null>", (void*)(node?node->fn:NULL));
+      struct handler_entry *ent = &snapshot[i];
+      fprintf(stderr, "[httpd] DEBUG: checking handler %d: idx=%d route='%s' fn=%p\n",
+              i+1, i, ent->route, (void*)ent->fn);
       fflush(stderr);
-      if (!node) continue;
-      if (node->route[0] && strcmp(node->route, r->path) == 0) {
-        fprintf(stderr, "[httpd] DEBUG: found matching handler for '%s' (node=%p), calling it\n", r->path, (void*)node);
+      if (ent->route[0] && strcmp(ent->route, r->path) == 0) {
+        fprintf(stderr, "[httpd] DEBUG: found matching handler for '%s' (idx=%d), calling it\n", r->path, i);
         fflush(stderr);
         handled = 1;
         if (!http_is_client_allowed(r->client_ip)) {
-          if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r->client_ip, node->route);
+          if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r->client_ip, ent->route);
           struct linger _lg2 = {1,0}; setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg2, sizeof(_lg2)); close(cfd); http_request_free(r); free(snapshot); return NULL;
         }
-        fprintf(stderr, "[httpd] DEBUG: calling handler function %p for route '%s'\n", (void*)node->fn, node->route);
+        fprintf(stderr, "[httpd] DEBUG: calling handler function %p for route '%s'\n", (void*)ent->fn, ent->route);
         fflush(stderr);
-        node->fn(r);
+        ent->fn(r);
         fprintf(stderr, "[httpd] DEBUG: handler returned\n"); fflush(stderr);
         break;
       }
