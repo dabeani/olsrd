@@ -3745,7 +3745,31 @@ static int h_status_lite(http_request_t *r) {
       if (routes_raw) free(routes_raw);
       if (topology_raw) free(topology_raw);
     }
-    APP_L(",\"olsr_routes_count\":%lu,\"olsr_nodes_count\":%lu", olsr_routes, olsr_nodes);
+    /* Attempt to include memory stats (Linux /proc/meminfo) for the lightweight payload */
+    unsigned long mem_total_kb = 0, mem_free_kb = 0, mem_available_kb = 0;
+    {
+      FILE *mf = fopen("/proc/meminfo", "r");
+      if (mf) {
+        char line[256];
+        while (fgets(line, sizeof(line), mf)) {
+          if (mem_total_kb == 0 && strstr(line, "MemTotal:")) { sscanf(line, "MemTotal: %lu kB", &mem_total_kb); }
+          else if (mem_available_kb == 0 && strstr(line, "MemAvailable:")) { sscanf(line, "MemAvailable: %lu kB", &mem_available_kb); }
+          else if (mem_free_kb == 0 && strstr(line, "MemFree:")) { sscanf(line, "MemFree: %lu kB", &mem_free_kb); }
+          if (mem_total_kb && (mem_available_kb || mem_free_kb)) break;
+        }
+        fclose(mf);
+      }
+    }
+    double mem_used_percent = -1.0;
+    if (mem_total_kb > 0) {
+      unsigned long used_kb = mem_total_kb - (mem_available_kb ? mem_available_kb : mem_free_kb);
+      mem_used_percent = ((double)used_kb / (double)mem_total_kb) * 100.0;
+    }
+    if (mem_used_percent >= 0.0) {
+      APP_L(",\"olsr_routes_count\":%lu,\"olsr_nodes_count\":%lu,\"memory_total_kb\":%lu,\"memory_free_kb\":%lu,\"memory_used_percent\":%.2f", olsr_routes, olsr_nodes, mem_total_kb, mem_available_kb ? mem_available_kb : mem_free_kb, mem_used_percent);
+    } else {
+      APP_L(",\"olsr_routes_count\":%lu,\"olsr_nodes_count\":%lu", olsr_routes, olsr_nodes);
+    }
   }
   APP_L("}\n");
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); return 0;
@@ -3994,8 +4018,39 @@ static int h_status_stats(http_request_t *r) {
     if (topology_raw) free(topology_raw);
   }
 
-  snprintf(out, sizeof(out), "{\"olsr_routes_count\":%lu,\"olsr_nodes_count\":%lu,\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu}}\n",
-           olsr_routes, olsr_nodes, qlen, dropped, retries, successes);
+  /* Attempt to fetch memory stats on Linux via /proc/meminfo (fallback to omitted on other OSes) */
+  unsigned long mem_total_kb = 0, mem_free_kb = 0, mem_available_kb = 0;
+  {
+    FILE *mf = fopen("/proc/meminfo", "r");
+    if (mf) {
+      char line[256];
+      while (fgets(line, sizeof(line), mf)) {
+        if (mem_total_kb == 0 && strstr(line, "MemTotal:")) {
+          sscanf(line, "MemTotal: %lu kB", &mem_total_kb);
+        } else if (mem_available_kb == 0 && strstr(line, "MemAvailable:")) {
+          sscanf(line, "MemAvailable: %lu kB", &mem_available_kb);
+        } else if (mem_free_kb == 0 && strstr(line, "MemFree:")) {
+          sscanf(line, "MemFree: %lu kB", &mem_free_kb);
+        }
+        if (mem_total_kb && (mem_available_kb || mem_free_kb)) break;
+      }
+      fclose(mf);
+    }
+  }
+
+  double mem_used_percent = -1.0;
+  if (mem_total_kb > 0) {
+    unsigned long used_kb = mem_total_kb - (mem_available_kb ? mem_available_kb : mem_free_kb);
+    mem_used_percent = ((double)used_kb / (double)mem_total_kb) * 100.0;
+  }
+
+  if (mem_used_percent >= 0.0) {
+    snprintf(out, sizeof(out), "{\"olsr_routes_count\":%lu,\"olsr_nodes_count\":%lu,\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu},\"memory_total_kb\":%lu,\"memory_free_kb\":%lu,\"memory_used_percent\":%.2f}\n",
+             olsr_routes, olsr_nodes, qlen, dropped, retries, successes, mem_total_kb, mem_available_kb ? mem_available_kb : mem_free_kb, mem_used_percent);
+  } else {
+    snprintf(out, sizeof(out), "{\"olsr_routes_count\":%lu,\"olsr_nodes_count\":%lu,\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu}}\n",
+             olsr_routes, olsr_nodes, qlen, dropped, retries, successes);
+  }
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, out, strlen(out));
   return 0;
 }
