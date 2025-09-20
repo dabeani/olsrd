@@ -197,11 +197,17 @@ static int starts_with(const char *s, const char *p) {
 
 int http_server_register_handler(const char *route, http_handler_fn fn) {
   http_handler_node_t *n = (http_handler_node_t*)calloc(1, sizeof(*n));
-  if (!n) return -1;
+  if (!n) {
+    fprintf(stderr, "[httpd] ERROR: failed to allocate handler node for route '%s'\n", route);
+    fflush(stderr);
+    return -1;
+  }
   snprintf(n->route, sizeof(n->route), "%s", route);
   n->fn = fn;
   n->next = g_handlers;
   g_handlers = n;
+  fprintf(stderr, "[httpd] DEBUG: registered handler for route '%s' at %p (fn=%p)\n", route, (void*)n, (void*)fn);
+  fflush(stderr);
   return 0;
 }
 
@@ -446,8 +452,12 @@ static void *connection_worker(void *arg) {
   /* dispatch to registered handlers */
   http_handler_node_t *nptr = g_handlers;
   int handled = 0;
-  fprintf(stderr, "[httpd] DEBUG: starting handler dispatch loop\n");
+  fprintf(stderr, "[httpd] DEBUG: starting handler dispatch loop, g_handlers=%p\n", (void*)g_handlers);
   fflush(stderr);
+  if (g_handlers) {
+    fprintf(stderr, "[httpd] DEBUG: first handler route='%s' fn=%p\n", g_handlers->route, (void*)g_handlers->fn);
+    fflush(stderr);
+  }
   while (nptr) {
     fprintf(stderr, "[httpd] DEBUG: nptr=%p, nptr->route='%s', nptr->fn=%p, r->path='%s'\n", 
             (void*)nptr, nptr->route, (void*)nptr->fn, r->path);
