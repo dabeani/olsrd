@@ -3975,7 +3975,7 @@ static int h_devices_json(http_request_t *r) {
      */
     if (udcopy) {
       fprintf(stderr, "[status-plugin] h_devices_json: starting aggregation\n");
-      /* lightweight in-memory aggregation */
+      /* lightweight in-memory aggregation (allocate on heap to avoid large stack usage) */
       #define MAX_AGG_DEV 256
       struct agg_dev {
         char key[256]; /* aggregation key (hostname or fallback) */
@@ -3991,8 +3991,16 @@ static int h_devices_json(http_request_t *r) {
         char tx_rate[64];
         char rx_rate[64];
         int used;
-      } aggs[MAX_AGG_DEV];
-      memset(aggs, 0, sizeof(aggs));
+      };
+      struct agg_dev *aggs = calloc((size_t)MAX_AGG_DEV, sizeof(*aggs));
+      if (!aggs) {
+        /* oom: fallback to empty devices */
+        json_buf_append(&out, &len, &cap, "\"devices\":[]");
+        if (udcopy) free(udcopy);
+        if (arp) free(arp);
+        send_json(r, "{}\n");
+        return 0;
+      }
       int agg_count = 0;
 
       const char *s = udcopy; while (*s && isspace((unsigned char)*s)) s++; if (*s == '[') s++;
@@ -4181,6 +4189,7 @@ static int h_devices_json(http_request_t *r) {
         json_buf_append(&out, &len, &cap, ",\"source\":\"ubnt\"}");
       }
       json_buf_append(&out, &len, &cap, "]");
+      free(aggs);
     } else {
       json_buf_append(&out, &len, &cap, "\"devices\":[]");
     }
