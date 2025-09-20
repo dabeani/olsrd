@@ -3871,6 +3871,7 @@ static int h_status_lite(http_request_t *r) {
  * Response schema: { "devices": [ ... ], "airos": { ... } }
  */
 static int h_devices_json(http_request_t *r) {
+  fprintf(stderr, "[status-plugin] h_devices_json called\n");
   char *arp = NULL; size_t arpn = 0;
   char *udcopy = NULL; size_t udlen = 0;
   int have_ud = 0, have_arp = 0;
@@ -3888,6 +3889,7 @@ static int h_devices_json(http_request_t *r) {
   }
 
   /* try to serve cached merged devices JSON via coalescer */
+  fprintf(stderr, "[status-plugin] h_devices_json: trying coalescer\n");
   char *cached = NULL; size_t cached_len = 0;
   if (endpoint_coalesce_try_start(&g_devices_co, &cached, &cached_len)) {
     if (cached) {
@@ -3895,6 +3897,7 @@ static int h_devices_json(http_request_t *r) {
     }
     /* otherwise fall through to build fresh output */
   }
+  fprintf(stderr, "[status-plugin] h_devices_json: building fresh output\n");
 
   /* If the client requested a refresh, perform a synchronous discovery pass so
    * the subsequent cache snapshot may contain fresh data. This call may block
