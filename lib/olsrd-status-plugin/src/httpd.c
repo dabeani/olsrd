@@ -37,6 +37,7 @@ static pthread_t g_srv_th;
 static int g_run = 0;
 static char g_asset_root[512] = {0};
 static http_handler_node_t *g_handlers = NULL;
+static pthread_mutex_t g_handlers_lock = PTHREAD_MUTEX_INITIALIZER;
 /* control whether per-request access logging is enabled (env OLSRD_STATUS_ACCESS_LOG=0 disables) */
 static int g_log_access = 1;
 /* simple allow-list storage */
@@ -204,8 +205,10 @@ int http_server_register_handler(const char *route, http_handler_fn fn) {
   }
   snprintf(n->route, sizeof(n->route), "%s", route);
   n->fn = fn;
+  pthread_mutex_lock(&g_handlers_lock);
   n->next = g_handlers;
   g_handlers = n;
+  pthread_mutex_unlock(&g_handlers_lock);
   fprintf(stderr, "[httpd] DEBUG: registered handler for route '%s' at %p (fn=%p)\n", route, (void*)n, (void*)fn);
   fflush(stderr);
   return 0;
@@ -450,7 +453,16 @@ static void *connection_worker(void *arg) {
   fprintf(stderr, "[httpd] DEBUG: not static asset, dispatching to handlers\n");
   fflush(stderr);
   /* dispatch to registered handlers */
+  pthread_mutex_lock(&g_handlers_lock);
   http_handler_node_t *nptr = g_handlers;
+  int handler_count = 0;
+  while (nptr) {
+    handler_count++;
+    nptr = nptr->next;
+  }
+  fprintf(stderr, "[httpd] DEBUG: dispatching to %d handlers\n", handler_count);
+  fflush(stderr);
+  nptr = g_handlers;
   int handled = 0;
   fprintf(stderr, "[httpd] DEBUG: starting handler dispatch loop, g_handlers=%p\n", (void*)g_handlers);
   fflush(stderr);
@@ -458,16 +470,17 @@ static void *connection_worker(void *arg) {
     fprintf(stderr, "[httpd] DEBUG: first handler route='%s' fn=%p\n", g_handlers->route, (void*)g_handlers->fn);
     fflush(stderr);
   }
-  int handler_count = 0;
+  handler_count = 0;
   while (nptr) {
     handler_count++;
-    fprintf(stderr, "[httpd] DEBUG: handler %d: nptr=%p, route='%s', fn=%p, r->path='%s'\n", 
-            handler_count, (void*)nptr, nptr->route[0] ? nptr->route : "(null)", (void*)nptr->fn, r->path);
+    fprintf(stderr, "[httpd] DEBUG: checking handler %d: route='%s' fn=%p\n", 
+            handler_count, nptr->route, (void*)nptr->fn);
     fflush(stderr);
     if (nptr->route[0] && strcmp(nptr->route, r->path) == 0) {
       fprintf(stderr, "[httpd] DEBUG: found matching handler for '%s', calling it\n", r->path);
       fflush(stderr);
       handled = 1;
+      pthread_mutex_unlock(&g_handlers_lock);
       if (!http_is_client_allowed(r->client_ip)) { 
         if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r->client_ip, nptr->route); 
         struct linger _lg2 = {1,0}; 
@@ -489,6 +502,9 @@ static void *connection_worker(void *arg) {
       break;
     }
     nptr = nptr->next;
+  }
+  if (!handled) {
+    pthread_mutex_unlock(&g_handlers_lock);
   }
   fprintf(stderr, "[httpd] DEBUG: handler dispatch completed, checked %d handlers, handled=%d\n", handler_count, handled);
   fflush(stderr);
@@ -717,9 +733,11 @@ void http_server_stop(void) {
     for (int i = 0; i < g_pool_size; ++i) pthread_join(g_pool_workers[i], NULL);
     free(g_pool_workers); g_pool_workers = NULL; g_pool_size = 0; g_pool_enabled = 0;
   }
+  pthread_mutex_lock(&g_handlers_lock);
   http_handler_node_t *n = g_handlers;
   while (n) { http_handler_node_t *nx = n->next; free(n); n = nx; }
   g_handlers = NULL;
+  pthread_mutex_unlock(&g_handlers_lock);
   fprintf(stderr, "[httpd] DEBUG: http_server_stop completed, handlers cleaned up\n");
   fflush(stderr);
 }
