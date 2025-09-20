@@ -102,12 +102,12 @@ static int parse_station_obj(const char *st, const char *en, char *macbuf, size_
   macbuf[0]=txbuf[0]=rxbuf[0]=sigbuf[0]='\0';
   const char *v;
   /* mac */ v = find_key(st, en, "mac"); if (v && *v=='\"') { const char *next = extract_quoted(v, en, macbuf, macsz); if (!next) macbuf[0]=0; }
-  /* tx */ v = find_key(st, en, "tx"); if (v) { char num[32]; size_t i=0; while (v<en && *v && (i+1)<sizeof(num) && (isdigit((unsigned char)*v) || *v=='-' || *v=='+')) num[i++]=*v++; num[i]=0; if(i) { if(txsz) strncpy(txbuf,num,txsz-1), txbuf[txsz-1]=0; } }
-  /* rx */ v = find_key(st, en, "rx"); if (v) { char num[32]; size_t i=0; while (v<en && *v && (i+1)<sizeof(num) && (isdigit((unsigned char)*v) || *v=='-' || *v=='+')) num[i++]=*v++; num[i]=0; if(i) { if(rxsz) strncpy(rxbuf,num,rxsz-1), rxbuf[rxsz-1]=0; } }
+  /* tx */ v = find_key(st, en, "tx"); if (v) { char num[32]; size_t i=0; while (v<en && *v && (i+1)<sizeof(num) && (isdigit((unsigned char)*v) || *v=='-' || *v=='+')) num[i++]=*v++; num[i]=0; if (i && txsz) { size_t clen = strlen(num); if (clen > txsz - 1) clen = txsz - 1; memcpy(txbuf, num, clen); txbuf[clen] = '\0'; } }
+  /* rx */ v = find_key(st, en, "rx"); if (v) { char num[32]; size_t i=0; while (v<en && *v && (i+1)<sizeof(num) && (isdigit((unsigned char)*v) || *v=='-' || *v=='+')) num[i++]=*v++; num[i]=0; if (i && rxsz) { size_t clen = strlen(num); if (clen > rxsz - 1) clen = rxsz - 1; memcpy(rxbuf, num, clen); rxbuf[clen] = '\0'; } }
   /* signal (number or string) */ v = find_key(st, en, "signal"); if (v) {
     const char *p = skipws(v, en);
     if (p && p < en && *p == '"') { extract_quoted(p, en, sigbuf, sigsz); }
-    else { char num[32]; size_t i=0; while (p<en && *p && (i+1)<sizeof(num) && (isdigit((unsigned char)*p) || *p=='-' || *p=='+')) num[i++]=*p++; num[i]=0; if(i) { if(sigsz) strncpy(sigbuf,num,sigsz-1), sigbuf[sigsz-1]=0; } }
+  else { char num[32]; size_t i=0; while (p<en && *p && (i+1)<sizeof(num) && (isdigit((unsigned char)*p) || *p=='-' || *p=='+')) num[i++]=*p++; num[i]=0; if (i && sigsz) { size_t clen = strlen(num); if (clen > sigsz - 1) clen = sigsz - 1; memcpy(sigbuf, num, clen); sigbuf[clen] = '\0'; } }
   }
   return 0;
 }
@@ -160,9 +160,14 @@ static void parse_airos(const char *buf, size_t n) {
           }
           airos_entry_t *ent = &g_entries[g_entries_n++];
           ent->ip[0]=ent->mac[0]=0; ent->info.valid = 0;
-          if (foundip[0]) strncpy(ent->ip, foundip, sizeof(ent->ip)-1);
-          if (mac[0]) strncpy(ent->mac, mac, sizeof(ent->mac)-1);
-          if (tx[0] || rx[0] || sig[0]) { ent->info.valid = 1; if (tx[0]) strncpy(ent->info.tx, tx, sizeof(ent->info.tx)-1); if (rx[0]) strncpy(ent->info.rx, rx, sizeof(ent->info.rx)-1); if (sig[0]) strncpy(ent->info.signal, sig, sizeof(ent->info.signal)-1); }
+          if (foundip[0]) { size_t clen = strlen(foundip); if (clen > sizeof(ent->ip) - 1) clen = sizeof(ent->ip) - 1; memcpy(ent->ip, foundip, clen); ent->ip[clen] = '\0'; }
+          if (mac[0]) { size_t clen = strlen(mac); if (clen > sizeof(ent->mac) - 1) clen = sizeof(ent->mac) - 1; memcpy(ent->mac, mac, clen); ent->mac[clen] = '\0'; }
+          if (tx[0] || rx[0] || sig[0]) {
+            ent->info.valid = 1;
+            if (tx[0]) { size_t clen = strlen(tx); if (clen > sizeof(ent->info.tx) - 1) clen = sizeof(ent->info.tx) - 1; memcpy(ent->info.tx, tx, clen); ent->info.tx[clen] = '\0'; }
+            if (rx[0]) { size_t clen = strlen(rx); if (clen > sizeof(ent->info.rx) - 1) clen = sizeof(ent->info.rx) - 1; memcpy(ent->info.rx, rx, clen); ent->info.rx[clen] = '\0'; }
+            if (sig[0]) { size_t clen = strlen(sig); if (clen > sizeof(ent->info.signal) - 1) clen = sizeof(ent->info.signal) - 1; memcpy(ent->info.signal, sig, clen); ent->info.signal[clen] = '\0'; }
+          }
         }
         st = q; continue;
       }
