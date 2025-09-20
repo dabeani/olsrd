@@ -12,8 +12,8 @@ CC      ?= cc
 RM      ?= rm -f
 MKDIR_P ?= mkdir -p
 
-SRCS := src/olsrd_status_plugin.c src/httpd.c src/util.c src/connections.c src/standalone_links_parser.c rev/discover/ubnt_discover.c
-HDRS := src/httpd.h src/util.h rev/discover/ubnt_discover.h
+SRCS := src/olsrd_status_plugin.c src/httpd.c src/util.c src/connections.c src/standalone_links_parser.c src/airos_cache.c rev/discover/ubnt_discover.c
+HDRS := src/httpd.h src/util.h src/airos_cache.h rev/discover/ubnt_discover.h
 
 CFLAGS   ?= -O2
 CFLAGS   += -fPIC
