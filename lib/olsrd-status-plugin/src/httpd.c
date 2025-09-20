@@ -450,7 +450,7 @@ static void *connection_worker(void *arg) {
   fflush(stderr);
   while (nptr) {
     fprintf(stderr, "[httpd] DEBUG: nptr=%p, nptr->route='%s', nptr->fn=%p, r->path='%s'\n", 
-            (void*)nptr, nptr->route[0] ? nptr->route : "NULL", (void*)nptr->fn, r->path[0] ? r->path : "NULL");
+            (void*)nptr, nptr->route, (void*)nptr->fn, r->path);
     fflush(stderr);
     if (strcmp(nptr->route, r->path) == 0) {
       fprintf(stderr, "[httpd] DEBUG: found matching handler, calling it\n");

@@ -28,3 +28,4 @@
 /olsr_switch.exe
 /olsr-setup.exe
 /src/cfgparser/olsrd_cfgparser
+lib/olsrd-status-plugin/build.log
