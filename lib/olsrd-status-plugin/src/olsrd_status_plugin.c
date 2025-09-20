@@ -3877,6 +3877,12 @@ static int h_status_lite(http_request_t *r) {
  * Response schema: { "devices": [ ... ], "airos": { ... } }
  */
 static int h_devices_json(http_request_t *r) {
+  fprintf(stderr, "[status-plugin] DEBUG: h_devices_json ENTRY - r=%p\n", (void*)r);
+  if (!r) {
+    fprintf(stderr, "[status-plugin] DEBUG: h_devices_json called with NULL request\n");
+    return 500;
+  }
+  fprintf(stderr, "[status-plugin] DEBUG: h_devices_json r->path='%s' r->method='%s'\n", r->path[0] ? r->path : "NULL", r->method[0] ? r->method : "NULL");
   fprintf(stderr, "[status-plugin] h_devices_json called\n");
   char *arp = NULL; size_t arpn = 0;
   char *udcopy = NULL; size_t udlen = 0;
