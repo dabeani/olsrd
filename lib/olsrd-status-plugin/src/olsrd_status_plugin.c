@@ -3541,7 +3541,7 @@ static int h_status_lite(http_request_t *r) {
   pthread_mutex_unlock(&g_status_lite_cache_lock);
 
   /* No cached copy: build payload synchronously (may be slower on first call) */
-  struct timeval t_start, t_before_devices, t_after_devices, t_end;
+  struct timeval t_start = {0}, t_before_devices = {0}, t_after_devices = {0}, t_end = {0};
   gettimeofday(&t_start, NULL);
   char *buf = NULL; size_t cap = 4096, len = 0; buf = malloc(cap); if(!buf){ send_json(r,"{}\n"); return 0; } buf[0]=0;
   #define APP_L(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { free(buf); send_json(r,"{}\n"); return 0; } } while(0)
@@ -4068,8 +4068,16 @@ static int h_devices_json(http_request_t *r) {
                   char *br = strchr(connpos, '[');
                   if (br) {
                     /* find closing ] */
-                    char *e = br; int depth = 0; while (e && *e) { if (*e == '[') depth++; else if (*e == ']') { depth--; if (depth==0) { e++; break; } } e++; }
-                    if (e && e > br) {
+                    char *ebr = br; int depth = 0;
+                    while (ebr && *ebr) {
+                      if (*ebr == '[') depth++;
+                      else if (*ebr == ']') {
+                        depth--;
+                        if (depth == 0) { ebr++; break; }
+                      }
+                      ebr++;
+                    }
+                    if (ebr && ebr > br) {
                       /* try to match by MAC first */
                       int got = 0;
                       /* prepare hw list */
@@ -4101,11 +4109,11 @@ static int h_devices_json(http_request_t *r) {
                       }
                       /* fallback: if no MAC match, use first station entry */
                       if (!found_any) {
-                        char *st = br; while (st < e && *st && *st != '{') st++; if (st && st < e) {
-                          char *txp = strstr(st, "\"tx\":"); if (txp && txp < e) { long v = strtol(txp+5, NULL, 10); if (v>=0 && need_tx) { snprintf(aggs[ai].tx_rate, sizeof(aggs[ai].tx_rate), "%ld", v); need_tx = 0; }}
-                          char *rxp = strstr(st, "\"rx\":"); if (rxp && rxp < e) { long v = strtol(rxp+5, NULL, 10); if (v>=0 && need_rx) { snprintf(aggs[ai].rx_rate, sizeof(aggs[ai].rx_rate), "%ld", v); need_rx = 0; }}
-                          char *sigp = strstr(st, "\"signal\":"); if (sigp && sigp < e) {
-                            char *sstart = sigp + strlen("\"signal\":"); while (*sstart && isspace((unsigned char)*sstart)) sstart++; if (*sstart == '"') { sstart++; char *send = strchr(sstart, '"'); if (send && send < e) { size_t sl = (size_t)(send - sstart); if (sl >= sizeof(aggs[ai].signal)) sl = sizeof(aggs[ai].signal)-1; memcpy(aggs[ai].signal, sstart, sl); aggs[ai].signal[sl]=0; need_signal = 0; }} else { long sv = strtol(sstart, NULL, 10); if (sv!=0 || (sstart[0]=='0')) { if (need_signal) snprintf(aggs[ai].signal, sizeof(aggs[ai].signal), "%ld", sv); need_signal = 0; }}
+                        char *st = br; while (st < ebr && *st && *st != '{') st++; if (st && st < ebr) {
+                          char *txp = strstr(st, "\"tx\":"); if (txp && txp < ebr) { long v = strtol(txp+5, NULL, 10); if (v>=0 && need_tx) { snprintf(aggs[ai].tx_rate, sizeof(aggs[ai].tx_rate), "%ld", v); need_tx = 0; }}
+                          char *rxp = strstr(st, "\"rx\":"); if (rxp && rxp < ebr) { long v = strtol(rxp+5, NULL, 10); if (v>=0 && need_rx) { snprintf(aggs[ai].rx_rate, sizeof(aggs[ai].rx_rate), "%ld", v); need_rx = 0; }}
+                          char *sigp = strstr(st, "\"signal\":"); if (sigp && sigp < ebr) {
+                            char *sstart = sigp + strlen("\"signal\":"); while (*sstart && isspace((unsigned char)*sstart)) sstart++; if (*sstart == '"') { sstart++; char *send = strchr(sstart, '"'); if (send && send < ebr) { size_t sl = (size_t)(send - sstart); if (sl >= sizeof(aggs[ai].signal)) sl = sizeof(aggs[ai].signal)-1; memcpy(aggs[ai].signal, sstart, sl); aggs[ai].signal[sl]=0; need_signal = 0; }} else { long sv = strtol(sstart, NULL, 10); if (sv!=0 || (sstart[0]=='0')) { if (need_signal) snprintf(aggs[ai].signal, sizeof(aggs[ai].signal), "%ld", sv); need_signal = 0; }}
                           }
                         }
                       }
