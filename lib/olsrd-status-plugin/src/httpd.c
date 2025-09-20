@@ -233,13 +233,61 @@ void http_send_status(http_request_t *r, int code, const char *status) {
 
 void http_write(http_request_t *r, const char *buf, size_t len) {
   if (r->hdr_pending) {
+    /* Use writev to send headers + body, but loop to handle partial writes. */
     struct iovec iov[2];
     iov[0].iov_base = r->hdr_buf; iov[0].iov_len = r->hdr_len;
     iov[1].iov_base = (void*)buf; iov[1].iov_len = len;
-    ssize_t _rv = writev(r->fd, iov, 2); (void)_rv;
+    size_t total_to_write = iov[0].iov_len + iov[1].iov_len;
+    size_t total_written = 0;
+    while (total_written < total_to_write) {
+      /* Attempt to write remaining data. */
+      ssize_t rv = writev(r->fd, iov, 2);
+      if (rv < 0) {
+        if (errno == EINTR) continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK) { /* temporary, try again briefly */
+          usleep(1000);
+          continue;
+        }
+        /* unrecoverable error: stop trying */
+        break;
+      }
+      /* advance by rv bytes: adjust iov buffers accordingly */
+      total_written += (size_t)rv;
+      if ((size_t)rv >= iov[0].iov_len) {
+        /* consumed at least all of header part */
+        size_t hdr_consumed = iov[0].iov_len;
+        size_t body_consumed = (size_t)rv - hdr_consumed;
+        /* zero out header iov so next writev focuses on body only */
+        iov[0].iov_base = NULL; iov[0].iov_len = 0;
+        if (body_consumed >= iov[1].iov_len) {
+          /* done */
+          iov[1].iov_base = NULL; iov[1].iov_len = 0;
+        } else {
+          /* advance body pointer */
+          iov[1].iov_base = (void*)((char*)iov[1].iov_base + body_consumed);
+          iov[1].iov_len -= body_consumed;
+        }
+      } else {
+        /* only part of header consumed */
+        size_t hdr_consumed = (size_t)rv;
+        iov[0].iov_base = (void*)((char*)iov[0].iov_base + hdr_consumed);
+        iov[0].iov_len -= hdr_consumed;
+        /* body unchanged */
+      }
+    }
     r->hdr_pending = 0; r->hdr_len = 0;
   } else {
-    ssize_t _rv2 = write(r->fd, buf, len); (void)_rv2;
+    /* Plain write loop to ensure all bytes are written */
+    size_t off = 0;
+    while (off < len) {
+      ssize_t rv = write(r->fd, buf + off, len - off);
+      if (rv < 0) {
+        if (errno == EINTR) continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK) { usleep(1000); continue; }
+        break;
+      }
+      off += (size_t)rv;
+    }
   }
 }
 
