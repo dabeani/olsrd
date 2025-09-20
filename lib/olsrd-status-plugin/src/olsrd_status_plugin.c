@@ -4627,7 +4627,9 @@ static int h_nodedb(http_request_t *r) {
      */
     const char *dbg = getenv("OLSRD_STATUS_DEBUG_NODEDB");
     if (dbg && dbg[0]=='1') {
-      fprintf(stderr, "[status-plugin][debug] h_nodedb: cached_len=%zu last_fetch=%ld ETag=" "%zx-%ld\n", g_nodedb_cached_len, (long)g_nodedb_last_fetch, g_nodedb_cached_len, g_nodedb_last_fetch);
+      /* Print last_fetch as long long to match time_t on targets where it's 64-bit */
+      fprintf(stderr, "[status-plugin][debug] h_nodedb: cached_len=%zu last_fetch=%lld ETag=%zx-%lld\n",
+              g_nodedb_cached_len, (long long)g_nodedb_last_fetch, g_nodedb_cached_len, (long long)g_nodedb_last_fetch);
       /* print first up to 64 bytes in hex to aid quick inspection */
       size_t preview = g_nodedb_cached_len < 64 ? g_nodedb_cached_len : 64;
       fprintf(stderr, "[status-plugin][debug] h_nodedb: preview=");
