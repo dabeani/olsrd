@@ -198,6 +198,7 @@ static int g_status_devices_mode = 1; /* default keep current behavior */
  * Returns newly malloc'ed filtered array string on success (caller must free),
  * or NULL on failure (caller should keep original).
  */
+static char *filter_devices_array(const char *in, int lite, int drop_empty, size_t *out_len) __attribute__((unused));
 static char *filter_devices_array(const char *in, int lite, int drop_empty, size_t *out_len) {
   if (!in) return NULL;
   const char *p = in; while (*p && isspace((unsigned char)*p)) p++;
@@ -3803,6 +3804,7 @@ static int h_devices_json(http_request_t *r) {
   char *udcopy = NULL; size_t udlen = 0;
   int have_ud = 0, have_arp = 0;
   int want_lite = 0;
+  (void)want_lite;
   if (r && r->query[0] && strstr(r->query, "lite=1")) want_lite = 1;
   /* Optional: allow clients to request an immediate discovery refresh via ?refresh=1
    * This is useful for live debugging when the cached devices array is empty.
@@ -3931,9 +3933,9 @@ static int h_devices_json(http_request_t *r) {
           /* find or create agg entry */
           int ai = -1;
           for (int i = 0; i < agg_count; i++) { if (strcmp(aggs[i].key, keybuf) == 0) { ai = i; break; } }
-          if (ai < 0 && agg_count < MAX_AGG_DEV) { ai = agg_count++; memset(&aggs[ai], 0, sizeof(aggs[ai])); strncpy(aggs[ai].key, keybuf, sizeof(aggs[ai].key)-1); aggs[ai].used = 1; }
+          if (ai < 0 && agg_count < MAX_AGG_DEV) { ai = agg_count++; memset(&aggs[ai], 0, sizeof(aggs[ai])); snprintf(aggs[ai].key, sizeof(aggs[ai].key), "%s", keybuf); aggs[ai].used = 1; }
           if (ai >= 0) {
-            /* hostname */ if (tmp_host[0] && !aggs[ai].hostname[0]) strncpy(aggs[ai].hostname, tmp_host, sizeof(aggs[ai].hostname)-1);
+            /* hostname */ if (tmp_host[0] && !aggs[ai].hostname[0]) snprintf(aggs[ai].hostname, sizeof(aggs[ai].hostname), "%s", tmp_host);
             /* add IP if not already present */ if (tmp_ip[0]) {
               if (aggs[ai].ips[0] == '\0') snprintf(aggs[ai].ips, sizeof(aggs[ai].ips), "%s", tmp_ip);
               else {
@@ -3948,14 +3950,14 @@ static int h_devices_json(http_request_t *r) {
               else { if (strstr(aggs[ai].hw, tmp_hw) == NULL) { strncat(aggs[ai].hw, ", ", sizeof(aggs[ai].hw) - strlen(aggs[ai].hw) - 1); strncat(aggs[ai].hw, tmp_hw, sizeof(aggs[ai].hw) - strlen(aggs[ai].hw) - 1); } }
             }
             /* prefer non-empty other fields */
-            if (!aggs[ai].product[0] && tmp_product[0]) strncpy(aggs[ai].product, tmp_product, sizeof(aggs[ai].product)-1);
-            if (!aggs[ai].uptime[0] && tmp_uptime[0]) strncpy(aggs[ai].uptime, tmp_uptime, sizeof(aggs[ai].uptime)-1);
-            if (!aggs[ai].mode[0] && tmp_mode[0]) strncpy(aggs[ai].mode, tmp_mode, sizeof(aggs[ai].mode)-1);
-            if (!aggs[ai].essid[0] && tmp_essid[0]) strncpy(aggs[ai].essid, tmp_essid, sizeof(aggs[ai].essid)-1);
-            if (!aggs[ai].firmware[0] && tmp_fw[0]) strncpy(aggs[ai].firmware, tmp_fw, sizeof(aggs[ai].firmware)-1);
-            if (!aggs[ai].signal[0] && tmp_signal[0]) strncpy(aggs[ai].signal, tmp_signal, sizeof(aggs[ai].signal)-1);
-            if (!aggs[ai].tx_rate[0] && tmp_tx[0]) strncpy(aggs[ai].tx_rate, tmp_tx, sizeof(aggs[ai].tx_rate)-1);
-            if (!aggs[ai].rx_rate[0] && tmp_rx[0]) strncpy(aggs[ai].rx_rate, tmp_rx, sizeof(aggs[ai].rx_rate)-1);
+            if (!aggs[ai].product[0] && tmp_product[0]) snprintf(aggs[ai].product, sizeof(aggs[ai].product), "%s", tmp_product);
+            if (!aggs[ai].uptime[0] && tmp_uptime[0]) snprintf(aggs[ai].uptime, sizeof(aggs[ai].uptime), "%s", tmp_uptime);
+            if (!aggs[ai].mode[0] && tmp_mode[0]) snprintf(aggs[ai].mode, sizeof(aggs[ai].mode), "%s", tmp_mode);
+            if (!aggs[ai].essid[0] && tmp_essid[0]) snprintf(aggs[ai].essid, sizeof(aggs[ai].essid), "%s", tmp_essid);
+            if (!aggs[ai].firmware[0] && tmp_fw[0]) snprintf(aggs[ai].firmware, sizeof(aggs[ai].firmware), "%s", tmp_fw);
+            if (!aggs[ai].signal[0] && tmp_signal[0]) snprintf(aggs[ai].signal, sizeof(aggs[ai].signal), "%s", tmp_signal);
+            if (!aggs[ai].tx_rate[0] && tmp_tx[0]) snprintf(aggs[ai].tx_rate, sizeof(aggs[ai].tx_rate), "%s", tmp_tx);
+            if (!aggs[ai].rx_rate[0] && tmp_rx[0]) snprintf(aggs[ai].rx_rate, sizeof(aggs[ai].rx_rate), "%s", tmp_rx);
           }
 
           p = q; continue;
