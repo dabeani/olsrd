@@ -2076,6 +2076,10 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   if (gw_stats) { free(gw_stats); gw_stats = NULL; gw_stats_count = 0; }
 }
 
+/* Fallback plain-text parser implemented in standalone_links_parser.c */
+int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen);
+
+
 /* UBNT discover output acquisition using internal discovery only */
 static int ubnt_discover_output(char **out, size_t *outlen) {
   if (!out || !outlen) return -1;
@@ -3192,6 +3196,21 @@ static int h_status(http_request_t *r) {
       free(norm);
       if (combined_raw) { free(combined_raw); combined_raw=NULL; }
     } else {
+      /* Try plain-text parser fallback for vendors that expose plain-text OLSR tables */
+      if (combined_raw) {
+        if (normalize_olsrd_links_plain(combined_raw, &norm, &nn) == 0 && norm && nn > 0) {
+          APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", norm); APPEND(",");
+          free(norm); norm = NULL; nn = 0;
+          if (combined_raw) { free(combined_raw); combined_raw = NULL; }
+          goto links_done_plain_fallback;
+        }
+      } else {
+        if (normalize_olsrd_links_plain(olsr_links_raw, &norm, &nn) == 0 && norm && nn > 0) {
+          APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", norm); APPEND(",");
+          free(norm); norm = NULL; nn = 0;
+          goto links_done_plain_fallback;
+        }
+      }
       APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", olsr_links_raw); APPEND(",");
       /* neighbors fallback: try neighbors data first, then links */
       char *nne2 = NULL; size_t nne2_n = 0;
@@ -3201,6 +3220,7 @@ static int h_status(http_request_t *r) {
       } else {
         APPEND("\"neighbors\":[],");
       }
+links_done_plain_fallback:
       if (combined_raw) { free(combined_raw); combined_raw=NULL; }
     }
   } else {
