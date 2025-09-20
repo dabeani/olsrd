@@ -9,7 +9,6 @@ extern "C" {
 #endif
 
 typedef struct http_request {
-  struct http_request *next; /* for pooling */
   int fd;
   char method[8];
   char path[512];

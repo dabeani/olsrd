@@ -524,7 +524,7 @@ static conn_arg_t *g_conn_pool = NULL; /* freelist head */
 static int g_conn_pool_len = 0;
 static int g_conn_pool_max = 128;
 
-typedef struct http_req_pool_node { struct http_req_pool_node *next; } http_req_pool_node_t;
+typedef struct http_req_pool_node { struct http_req_pool_node *next; http_request_t *r; } http_req_pool_node_t;
 static pthread_mutex_t g_req_pool_lock = PTHREAD_MUTEX_INITIALIZER;
 static http_req_pool_node_t *g_req_pool = NULL;
 static int g_req_pool_len = 0;
@@ -580,11 +580,11 @@ void httpd_get_runtime_stats(int *conn_pool_len, int *task_count, int *pool_enab
 
 /* http_request pool - node-sized pool; http_request_t may be larger but we reuse memory */
 static http_request_t *http_request_alloc(void) {
-  http_req_pool_node_t *n = NULL;
+  http_req_pool_node_t *node = NULL;
   pthread_mutex_lock(&g_req_pool_lock);
   if (g_req_pool) {
-    n = g_req_pool; g_req_pool = g_req_pool->next; g_req_pool_len--; pthread_mutex_unlock(&g_req_pool_lock);
-    http_request_t *r = (http_request_t*)n; memset(r,0,sizeof(*r)); return r;
+    node = g_req_pool; g_req_pool = g_req_pool->next; g_req_pool_len--; pthread_mutex_unlock(&g_req_pool_lock);
+    http_request_t *r = node->r; node->r = NULL; free(node); memset(r, 0, sizeof(*r)); return r;
   }
   pthread_mutex_unlock(&g_req_pool_lock);
   http_request_t *r = calloc(1, sizeof(*r)); return r;
@@ -594,7 +594,15 @@ static void http_request_free(http_request_t *r) {
   if (!r) return;
   pthread_mutex_lock(&g_req_pool_lock);
   if (g_req_pool_len < g_req_pool_max) {
-    http_req_pool_node_t *n = (http_req_pool_node_t*)r; n->next = g_req_pool; g_req_pool = n; g_req_pool_len++; pthread_mutex_unlock(&g_req_pool_lock); return;
+    http_req_pool_node_t *node = calloc(1, sizeof(*node));
+    if (node) {
+      node->r = r;
+      node->next = g_req_pool;
+      g_req_pool = node;
+      g_req_pool_len++;
+      pthread_mutex_unlock(&g_req_pool_lock);
+      return;
+    }
   }
   pthread_mutex_unlock(&g_req_pool_lock);
   free(r);
