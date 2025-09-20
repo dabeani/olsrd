@@ -3884,6 +3884,7 @@ static int h_devices_json(http_request_t *r) {
   int want_lite = 0;
   (void)want_lite;
   if (r && r->query[0] && strstr(r->query, "lite=1")) want_lite = 1;
+  fprintf(stderr, "[status-plugin] h_devices_json: parsed query params\n");
   /* Optional: allow clients to request an immediate discovery refresh via ?refresh=1
    * This is useful for live debugging when the cached devices array is empty.
    * Calling fetch_discover_once() synchronously will perform a discovery pass
@@ -3893,6 +3894,7 @@ static int h_devices_json(http_request_t *r) {
   if (r && r->query[0] && get_query_param(r, "refresh", qpval, sizeof(qpval))) {
     if (qpval[0] == '\0' || strcmp(qpval, "1") == 0 || strcmp(qpval, "true") == 0) want_refresh = 1;
   }
+  fprintf(stderr, "[status-plugin] h_devices_json: parsed refresh param\n");
 
   /* try to serve cached merged devices JSON via coalescer */
   fprintf(stderr, "[status-plugin] h_devices_json: trying coalescer\n");
@@ -3915,7 +3917,9 @@ static int h_devices_json(http_request_t *r) {
   }
 
   /* grab snapshot of cached normalized ubnt devices if present */
+  fprintf(stderr, "[status-plugin] h_devices_json: grabbing device cache\n");
   pthread_mutex_lock(&g_devices_cache_lock);
+  fprintf(stderr, "[status-plugin] h_devices_json: mutex locked\n");
   if (g_devices_cache && g_devices_cache_len > 0) {
     time_t nowt = time(NULL);
     if (g_ubnt_cache_ttl_s <= 0 || (nowt - g_devices_cache_ts) <= g_ubnt_cache_ttl_s) {
@@ -3931,11 +3935,13 @@ static int h_devices_json(http_request_t *r) {
     }
   }
   pthread_mutex_unlock(&g_devices_cache_lock);
+  fprintf(stderr, "[status-plugin] h_devices_json: mutex unlocked, have_ud=%d\n", have_ud);
 
   /* ARP fallback disabled for devices endpoint: do not call devices_from_arp_json() here */
   (void)arp; (void)arpn;
 
   /* Build merged JSON */
+  fprintf(stderr, "[status-plugin] h_devices_json: building JSON\n");
   char *out = NULL; size_t cap = 4096, len = 0;
   out = malloc(cap);
   if (!out) {
@@ -3948,14 +3954,17 @@ static int h_devices_json(http_request_t *r) {
   if (json_buf_append(&out, &len, &cap, "{") < 0) { free(out); if (udcopy) free(udcopy); if (arp) free(arp); send_json(r, "{}\n"); return 0; }
   /* devices array */
   if (!have_ud) {
+    fprintf(stderr, "[status-plugin] h_devices_json: no devices, returning empty\n");
     json_buf_append(&out, &len, &cap, "\"devices\":[]");
   } else if (!have_arp) {
+    fprintf(stderr, "[status-plugin] h_devices_json: parsing UBNT devices\n");
     /* Simple case: only UBNT devices present. Parse the normalized UBNT
      * JSON array and aggregate entries by hostname (fallback to hwaddr/ip).
      * For each aggregated device, combine all distinct IPv4 addresses into
      * a single comma-separated string and similarly collect hwaddrs.
      */
     if (udcopy) {
+      fprintf(stderr, "[status-plugin] h_devices_json: starting aggregation\n");
       /* lightweight in-memory aggregation */
       #define MAX_AGG_DEV 256
       struct agg_dev {
