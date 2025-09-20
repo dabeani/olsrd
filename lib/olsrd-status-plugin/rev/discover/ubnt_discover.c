@@ -55,7 +55,7 @@ static const char *tag_name(uint8_t t, int *is_str, int *is_ipv4, int *is_mac, i
         [0x01] = {"hwaddr", 0, 0, 1, 0},
         [0x02] = {"ipv4",   0, 1, 0, 0},
         [0x0B] = {"hostname", 1, 0, 0, 0},
-        [0x0C] = {"product",  1, 0, 0, 0},
+        [0x0C] = {"product", 1, 0, 0, 0},
         [0x0D] = {"fwversion",1, 0, 0, 0},
         [0x2A] = {"essid",    1, 0, 0, 0},
         [0x40] = {"uptime",   0, 0, 0, 1},
@@ -205,9 +205,7 @@ static size_t parse_tlv(const uint8_t *buf, size_t len, struct ubnt_kv *kv, size
                 int ok = 1;
                 for (size_t j=0;j<copy;j++) if (!isprint((unsigned char)val[j])) { ok=0; break; }
                 if (ok) out = kv_put(kv, cap, out, name, val);
-            }
-            }
-            else {
+            } else {
                 /* Unknown tag: accept printable strings as generic entries.
                  * If the value begins with '{' or '[' treat it as JSON and use key json_<TAG>;
                  * otherwise use str_<TAG> so hostnames/product/version are captured.
@@ -219,19 +217,20 @@ static size_t parse_tlv(const uint8_t *buf, size_t len, struct ubnt_kv *kv, size
                         if (!isprint(c) && c != '\r' && c != '\n' && c != '\t') { printable = 0; break; }
                     }
                     if (printable) {
-                        char val[UBNT_MAX_VALUE_LEN] = {0};
+                        char val2[UBNT_MAX_VALUE_LEN] = {0};
                         size_t copy = l;
-                        if (copy >= sizeof(val)) copy = sizeof(val) - 1;
-                        memcpy(val, v, copy);
-                        while (copy > 0 && val[copy-1] == 0) copy--;
-                        val[copy] = 0;
+                        if (copy >= sizeof(val2)) copy = sizeof(val2) - 1;
+                        memcpy(val2, v, copy);
+                        while (copy > 0 && val2[copy-1] == 0) copy--;
+                        val2[copy] = 0;
                         char keybuf[UBNT_MAX_KEY_LEN];
                         const char *pfx = (v[0] == '{' || v[0] == '[') ? "json" : "str";
                         snprintf(keybuf, sizeof(keybuf), "%s_%02X", pfx, t);
-                        out = kv_put(kv, cap, out, keybuf, val);
+                        out = kv_put(kv, cap, out, keybuf, val2);
                     }
                 }
             }
+        }
         i += l;
     }
     /* If nothing parsed, as a last resort scan for printable ASCII runs and add them
