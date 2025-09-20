@@ -1,15 +1,10 @@
-/**
- * Minimal UBNT discovery v1 client (UDP/10001).
- *
- * This header provides a small API used by the status plugin to probe
- * and parse UBNT discovery replies. Keep definitions minimal and safe.
-/**
- * Minimal UBNT discovery v1 client (UDP/10001).
- *
- * This header provides a small API used by the status plugin to probe
- * and parse UBNT discovery replies. Keep definitions minimal and safe.
+/*
+ * rev/discover/ubnt_discover.h
+ * Minimal UBNT discovery v1 client API used by olsrd-status-plugin.
  */
-#pragma once
+#ifndef OLSRD_STATUS_UBNT_DISCOVER_H
+#define OLSRD_STATUS_UBNT_DISCOVER_H
+
 #include <stdint.h>
 #include <stddef.h>
 #include <netinet/in.h>
@@ -49,3 +44,5 @@ void ubnt_hexdump(const void *buf, size_t len);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* OLSRD_STATUS_UBNT_DISCOVER_H */
