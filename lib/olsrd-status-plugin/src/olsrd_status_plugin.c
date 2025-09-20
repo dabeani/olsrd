@@ -98,6 +98,12 @@ static int g_cfg_port_set = 0;
 static int g_cfg_nodedb_ttl_set = 0;
 static int g_cfg_nodedb_write_disk_set = 0;
 static int g_cfg_nodedb_url_set = 0;
+static int g_cfg_bind_set = 0;
+static int g_cfg_enableipv6_set = 0;
+static int g_cfg_assetroot_set = 0;
+static int g_cfg_coalesce_devices_ttl_set = 0;
+static int g_cfg_coalesce_discover_ttl_set = 0;
+static int g_cfg_coalesce_traceroute_ttl_set = 0;
 static int g_cfg_net_count = 0;
 /* track fetch tuning PlParam presence */
 static int g_cfg_fetch_queue_set = 0;
@@ -5485,8 +5491,10 @@ nothing_found:
 static int set_str_param(const char *value, void *data, set_plugin_parameter_addon addon __attribute__((unused))) {
   if (!value || !data) return 1;
   snprintf((char*)data, 511, "%s", value);
-  /* If the caller provided nodedb_url via PlParam, mark it as set */
+  /* If the caller provided parameters via PlParam, mark them as set */
   if (data == g_nodedb_url) g_cfg_nodedb_url_set = 1;
+  if (data == g_bind) g_cfg_bind_set = 1;
+  if (data == g_asset_root) g_cfg_assetroot_set = 1;
   return 0;
 }
 static int set_int_param(const char *value, void *data, set_plugin_parameter_addon addon __attribute__((unused))) {
@@ -5872,6 +5880,70 @@ int olsrd_plugin_init(void) {
         g_log_buf_lines = (int)v;
         fprintf(stderr, "[status-plugin] setting log buffer lines from env: %d\n", g_log_buf_lines);
       } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_LOG_BUF_LINES value: %s (ignored)\n", env_lb);
+    }
+  }
+
+  /* Bind address env override */
+  if (!g_cfg_bind_set) {
+    const char *env_bind = getenv("OLSRD_STATUS_PLUGIN_BIND");
+    if (env_bind && env_bind[0]) {
+      snprintf(g_bind, sizeof(g_bind), "%s", env_bind);
+      fprintf(stderr, "[status-plugin] setting bind address from env: %s\n", g_bind);
+    }
+  }
+
+  /* Enable IPv6 env override */
+  if (!g_cfg_enableipv6_set) {
+    const char *env_ipv6 = getenv("OLSRD_STATUS_PLUGIN_ENABLEIPV6");
+    if (env_ipv6 && env_ipv6[0]) {
+      char *endptr = NULL; long v = strtol(env_ipv6, &endptr, 10);
+      if (endptr && *endptr == '\0' && (v == 0 || v == 1)) {
+        g_enable_ipv6 = (int)v;
+        fprintf(stderr, "[status-plugin] setting enableipv6 from env: %d\n", g_enable_ipv6);
+      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_PLUGIN_ENABLEIPV6 value: %s (ignored)\n", env_ipv6);
+    }
+  }
+
+  /* Asset root env override */
+  if (!g_cfg_assetroot_set) {
+    const char *env_asset = getenv("OLSRD_STATUS_PLUGIN_ASSETROOT");
+    if (env_asset && env_asset[0]) {
+      snprintf(g_asset_root, sizeof(g_asset_root), "%s", env_asset);
+      fprintf(stderr, "[status-plugin] setting assetroot from env: %s\n", g_asset_root);
+    }
+  }
+
+  /* Coalesce TTL env overrides */
+  if (!g_cfg_coalesce_devices_ttl_set) {
+    const char *env_cdt = getenv("OLSRD_STATUS_COALESCE_DEVICES_TTL");
+    if (env_cdt && env_cdt[0]) {
+      char *endptr = NULL; long v = strtol(env_cdt, &endptr, 10);
+      if (endptr && *endptr == '\0' && v >= 0 && v <= 86400) {
+        g_coalesce_devices_ttl = (int)v;
+        fprintf(stderr, "[status-plugin] setting coalesce_devices_ttl from env: %d\n", g_coalesce_devices_ttl);
+      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_COALESCE_DEVICES_TTL value: %s (ignored)\n", env_cdt);
+    }
+  }
+
+  if (!g_cfg_coalesce_discover_ttl_set) {
+    const char *env_cdt = getenv("OLSRD_STATUS_COALESCE_DISCOVER_TTL");
+    if (env_cdt && env_cdt[0]) {
+      char *endptr = NULL; long v = strtol(env_cdt, &endptr, 10);
+      if (endptr && *endptr == '\0' && v >= 0 && v <= 86400) {
+        g_coalesce_discover_ttl = (int)v;
+        fprintf(stderr, "[status-plugin] setting coalesce_discover_ttl from env: %d\n", g_coalesce_discover_ttl);
+      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_COALESCE_DISCOVER_TTL value: %s (ignored)\n", env_cdt);
+    }
+  }
+
+  if (!g_cfg_coalesce_traceroute_ttl_set) {
+    const char *env_ctt = getenv("OLSRD_STATUS_COALESCE_TRACEROUTE_TTL");
+    if (env_ctt && env_ctt[0]) {
+      char *endptr = NULL; long v = strtol(env_ctt, &endptr, 10);
+      if (endptr && *endptr == '\0' && v >= 0 && v <= 86400) {
+        g_coalesce_traceroute_ttl = (int)v;
+        fprintf(stderr, "[status-plugin] setting coalesce_traceroute_ttl from env: %d\n", g_coalesce_traceroute_ttl);
+      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_COALESCE_TRACEROUTE_TTL value: %s (ignored)\n", env_ctt);
     }
   }
 

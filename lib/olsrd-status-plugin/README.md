@@ -202,6 +202,24 @@ export OLSRD_STATUS_PLUGIN_NODEDB_TTL=600
 export OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK=1
 ```
 
+* `OLSRD_STATUS_PLUGIN_BIND` – bind address for the HTTP server (IPv4 or IPv6 address string). Example:
+
+```bash
+export OLSRD_STATUS_PLUGIN_BIND="0.0.0.0"
+```
+
+* `OLSRD_STATUS_PLUGIN_ENABLEIPV6` – integer (0 or 1) to enable IPv6 support. Example:
+
+```bash
+export OLSRD_STATUS_PLUGIN_ENABLEIPV6=1
+```
+
+* `OLSRD_STATUS_PLUGIN_ASSETROOT` – path to the directory containing static web assets. Example:
+
+```bash
+export OLSRD_STATUS_PLUGIN_ASSETROOT="/usr/share/olsrd-status-plugin/www"
+```
+
 * `OLSRD_STATUS_FETCH_STARTUP_WAIT` – optional integer seconds to wait during plugin startup for DNS/network readiness before attempting the first remote fetch. Useful in containers where networking may be delayed. Default is 30 seconds.
 
 ```bash
@@ -266,6 +284,9 @@ Precedence: for all of the above the plugin parameter `PlParam` in `olsrd.conf` 
 * `OLSRD_STATUS_ALLOW_ARP_FALLBACK` / PlParam `allow_arp_fallback` – when set to `1` allows ARP‑synthesized devices in broader status aggregations (not `/devices.json`). Default: 0.
 * `OLSRD_STATUS_ARP_CACHE_TTL_S` / PlParam `arp_cache_ttl_s` – TTL (seconds) for the internal ARP JSON cache used when ARP fallback is enabled. Default: 5.
 * `OLSRD_STATUS_STATUS_DEVICES_MODE` / PlParam `status_devices_mode` – controls whether `/status` embeds the (potentially large) devices array: `0` omit devices, `1` include full list (default), `2` include only summary counts.
+* `OLSRD_STATUS_COALESCE_DEVICES_TTL` / PlParam `coalesce_devices_ttl` – TTL (seconds) for coalescing `/devices.json` responses. Default: 30.
+* `OLSRD_STATUS_COALESCE_DISCOVER_TTL` / PlParam `coalesce_discover_ttl` – TTL (seconds) for coalescing discovery operations. Default: 30.
+* `OLSRD_STATUS_COALESCE_TRACEROUTE_TTL` / PlParam `coalesce_traceroute_ttl` – TTL (seconds) for coalescing traceroute operations. Default: 30.
 
 These parameters let you tune payload size and refresh behavior independently: for example you can keep a short ARP cache TTL for fresher MAC/IP correlation while keeping a longer UBNT discovery TTL when device metadata changes rarely.
 
