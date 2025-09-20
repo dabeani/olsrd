@@ -180,6 +180,7 @@ static int g_cfg_ubnt_probe_window_ms_set = 0;
  */
 static int g_ubnt_cache_ttl_s = 300;
 static int g_cfg_ubnt_cache_ttl_s_set = 0;
+static int g_cfg_status_lite_ttl_s_set = 0;
 /* Control whether fetch queue operations are logged to stderr (0=no, 1=yes) */
 static int g_fetch_log_queue = 0;
 static int g_cfg_fetch_log_queue_set = 0;
@@ -1064,6 +1065,7 @@ static void detect_traceroute_binary(void) {
 static int h_root(http_request_t *r);
 static int h_ipv4(http_request_t *r); static int h_ipv6(http_request_t *r);
 static int h_status(http_request_t *r); static int h_status_summary(http_request_t *r); static int h_status_olsr(http_request_t *r); static int h_status_lite(http_request_t *r);
+static int h_status_debug(http_request_t *r);
 static int h_status_stats(http_request_t *r);
 static int h_status_ping(http_request_t *r);
 static int h_status_py(http_request_t *r);
@@ -5406,6 +5408,7 @@ static int set_int_param(const char *value, void *data, set_plugin_parameter_add
   if (data == &g_fetch_dropped_warn) g_cfg_fetch_dropped_warn_set = 1;
   if (data == &g_log_request_debug) g_cfg_log_request_debug_set = 1;
   if (data == &g_log_buf_lines) g_cfg_log_buf_lines_set = 1;
+  if (data == &g_status_lite_ttl_s) g_cfg_status_lite_ttl_s_set = 1;
   return 0;
 }
 
@@ -5455,6 +5458,8 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "ubnt_probe_window_ms", .set_plugin_parameter = &set_int_param, .data = &g_ubnt_probe_window_ms, .addon = {0} },
   { .name = "ubnt_cache_ttl_s", .set_plugin_parameter = &set_int_param, .data = &g_ubnt_cache_ttl_s, .addon = {0} },
   { .name = "arp_cache_ttl_s", .set_plugin_parameter = &set_int_param, .data = &g_arp_cache_ttl_s, .addon = {0} },
+  /* TTL for lightweight /status/lite cache (seconds) */
+  { .name = "status_lite_ttl_s", .set_plugin_parameter = &set_int_param, .data = &g_status_lite_ttl_s, .addon = {0} },
   { .name = "status_devices_mode", .set_plugin_parameter = &set_int_param, .data = &g_status_devices_mode, .addon = {0} },
 };
 
@@ -5710,6 +5715,17 @@ int olsrd_plugin_init(void) {
         } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_UBNT_CACHE_TTL_S value: %s (ignored)\n", env_ct);
       }
     }
+    /* status_lite TTL override (seconds) */
+    if (!g_cfg_status_lite_ttl_s_set) {
+      const char *env_lt = getenv("OLSRD_STATUS_LITE_TTL_S");
+      if (env_lt && env_lt[0]) {
+        char *endptr = NULL; long v = strtol(env_lt, &endptr, 10);
+        if (endptr && *endptr == '\0' && v >= 0 && v <= 86400) {
+          g_status_lite_ttl_s = (int)v;
+          fprintf(stderr, "[status-plugin] setting status_lite ttl from env: %d s\n", g_status_lite_ttl_s);
+        } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_LITE_TTL_S value: %s (ignored)\n", env_lt);
+      }
+    }
     /* ARP cache TTL env override */
     {
       const char *env_at = getenv("OLSRD_STATUS_ARP_CACHE_TTL_S");
@@ -5818,6 +5834,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/status/ping", &h_status_ping);
   http_server_register_handler("/devices.json", &h_devices_json);
   http_server_register_handler("/status/stats", &h_status_stats);
+  http_server_register_handler("/status/debug", &h_status_debug);
   http_server_register_handler("/status.py", &h_status_py);
   http_server_register_handler("/status/traceroute", &h_status_traceroute);
   http_server_register_handler("/olsr/links", &h_olsr_links);
@@ -6091,6 +6108,25 @@ static int h_txtinfo(http_request_t *r) {
     http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
     http_write(r, out, n); free(out);
   } else send_text(r, "error\n");
+  return 0;
+}
+
+/* /status/debug - small diagnostic JSON with cache TTL and timestamps */
+static int h_status_debug(http_request_t *r) {
+  (void)r;
+  time_t nowt = time(NULL);
+  time_t cache_ts = 0;
+  size_t cache_len = 0;
+  int ttl = g_status_lite_ttl_s;
+  pthread_mutex_lock(&g_status_lite_cache_lock);
+  cache_ts = g_status_lite_cache_ts;
+  cache_len = g_status_lite_cache_len;
+  pthread_mutex_unlock(&g_status_lite_cache_lock);
+  long age = cache_ts ? (long)(nowt - cache_ts) : -1;
+  char buf[256];
+  int n = snprintf(buf, sizeof(buf), "{\"status_lite_ttl_s\":%d,\"cache_ts\":%lld,\"cache_age_s\":%ld,\"cache_len\":%zu}\n", ttl, (long long)cache_ts, age, cache_len);
+  if (n <= 0) { send_json(r, "{}\n"); return 0; }
+  http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, buf, (size_t)n);
   return 0;
 }
 static int h_jsoninfo(http_request_t *r) {

@@ -3,6 +3,11 @@
  *
  * This header provides a small API used by the status plugin to probe
  * and parse UBNT discovery replies. Keep definitions minimal and safe.
+/**
+ * Minimal UBNT discovery v1 client (UDP/10001).
+ *
+ * This header provides a small API used by the status plugin to probe
+ * and parse UBNT discovery replies. Keep definitions minimal and safe.
  */
 #pragma once
 #include <stdint.h>
