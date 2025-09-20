@@ -4068,6 +4068,7 @@ static int h_devices_json(http_request_t *r) {
       /* Try to enrich aggs with airos station data from /tmp/10-all.json when present */
       char *airos_raw = NULL; size_t airos_n = 0;
       if (path_exists("/tmp/10-all.json") && util_read_file("/tmp/10-all.json", &airos_raw, &airos_n) == 0 && airos_raw && airos_n > 0) {
+        char *airos_end = airos_raw + airos_n;
         for (int ai = 0; ai < agg_count; ai++) {
           int need_signal = (aggs[ai].signal[0] == '\0');
           int need_tx = (aggs[ai].tx_rate[0] == '\0');
@@ -4080,7 +4081,7 @@ static int h_devices_json(http_request_t *r) {
             /* extract token */
             while (*ipcur && isspace((unsigned char)*ipcur)) ipcur++;
             const char *ipend = ipcur;
-            while (*ipend && *ipend != ',') ipend++;
+            while (ipend && *ipend && *ipend != ',') ipend++;
             size_t il = (size_t)(ipend - ipcur);
             if (il >= sizeof(ipbuf)) il = sizeof(ipbuf)-1;
             if (il > 0) { memcpy(ipbuf, ipcur, il); ipbuf[il]=0; /* trim */ size_t t = il; while (t>0 && isspace((unsigned char)ipbuf[t-1])) ipbuf[--t]=0; }
@@ -4089,15 +4090,15 @@ static int h_devices_json(http_request_t *r) {
               /* find IP object in airos_raw: "<ip>" */
               char pat[128]; snprintf(pat, sizeof(pat), "\"%s\"", ipbuf);
               char *ippos = strstr(airos_raw, pat);
-              if (ippos) {
+              if (ippos && ippos < airos_end) {
                 /* look for connections array after ippos */
                 char *connpos = strstr(ippos, "\"connections\"");
-                if (connpos) {
+                if (connpos && connpos < airos_end) {
                   char *br = strchr(connpos, '[');
-                  if (br) {
+                  if (br && br < airos_end) {
                     /* find closing ] */
                     char *ebr = br; int depth = 0;
-                    while (ebr && *ebr) {
+                    while (ebr < airos_end && *ebr) {
                       if (*ebr == '[') depth++;
                       else if (*ebr == ']') {
                         depth--;
@@ -4105,11 +4106,11 @@ static int h_devices_json(http_request_t *r) {
                       }
                       ebr++;
                     }
-                    if (ebr && ebr > br) {
+                    if (ebr && ebr > br && ebr <= airos_end) {
                       /* try to match by MAC first */
                       int got = 0;
                       /* prepare hw list */
-                      char hwcopy[512]; hwcopy[0]=0; strncpy(hwcopy, aggs[ai].hw, sizeof(hwcopy)-1);
+                      char hwcopy[512]; hwcopy[0]=0; strncpy(hwcopy, aggs[ai].hw, sizeof(hwcopy)-1); hwcopy[sizeof(hwcopy)-1]=0;
                       /* split hw by commas and try each */
                       char *hwcur = hwcopy;
                       while (hwcur && *hwcur && !got) {
@@ -4120,15 +4121,15 @@ static int h_devices_json(http_request_t *r) {
                         if (mactok[0]) {
                           char macpat[128]; snprintf(macpat, sizeof(macpat), "\"mac\":\"%s\"", mactok);
                           char *mpos = strstr(br, macpat);
-                          if (mpos && mpos < e) {
+                          if (mpos && mpos < airos_end) {
                             /* find start of station object */
                             char *st = mpos; while (st > br && *st != '{') st--; if (st <= br) st = mpos;
                             /* search tx/rx/signal within station */
-                            char *txp = strstr(st, "\"tx\":"); if (txp && txp < e) { long v = strtol(txp+5, NULL, 10); if (v>=0 && need_tx) { snprintf(aggs[ai].tx_rate, sizeof(aggs[ai].tx_rate), "%ld", v); need_tx = 0; }}
-                            char *rxp = strstr(st, "\"rx\":"); if (rxp && rxp < e) { long v = strtol(rxp+5, NULL, 10); if (v>=0 && need_rx) { snprintf(aggs[ai].rx_rate, sizeof(aggs[ai].rx_rate), "%ld", v); need_rx = 0; }}
-                            char *sigp = strstr(st, "\"signal\":"); if (sigp && sigp < e) {
+                            char *txp = strstr(st, "\"tx\":"); if (txp && txp < airos_end) { long v = strtol(txp+5, NULL, 10); if (v>=0 && need_tx) { snprintf(aggs[ai].tx_rate, sizeof(aggs[ai].tx_rate), "%ld", v); need_tx = 0; }}
+                            char *rxp = strstr(st, "\"rx\":"); if (rxp && rxp < airos_end) { long v = strtol(rxp+5, NULL, 10); if (v>=0 && need_rx) { snprintf(aggs[ai].rx_rate, sizeof(aggs[ai].rx_rate), "%ld", v); need_rx = 0; }}
+                            char *sigp = strstr(st, "\"signal\":"); if (sigp && sigp < airos_end) {
                               /* signal may be number or string */
-                              char *sstart = sigp + strlen("\"signal\":"); while (*sstart && isspace((unsigned char)*sstart)) sstart++; if (*sstart == '"') { sstart++; char *send = strchr(sstart, '"'); if (send && send < e) { size_t sl = (size_t)(send - sstart); if (sl >= sizeof(aggs[ai].signal)) sl = sizeof(aggs[ai].signal)-1; memcpy(aggs[ai].signal, sstart, sl); aggs[ai].signal[sl]=0; need_signal = 0; }} else { long sv = strtol(sstart, NULL, 10); if (sv!=0 || (sstart[0]=='0')) { if (need_signal) snprintf(aggs[ai].signal, sizeof(aggs[ai].signal), "%ld", sv); need_signal = 0; }}
+                              char *sstart = sigp + strlen("\"signal\":"); while (*sstart && isspace((unsigned char)*sstart)) sstart++; if (*sstart == '"') { sstart++; char *send = strchr(sstart, '"'); if (send && send < airos_end) { size_t sl = (size_t)(send - sstart); if (sl >= sizeof(aggs[ai].signal)) sl = sizeof(aggs[ai].signal)-1; memcpy(aggs[ai].signal, sstart, sl); aggs[ai].signal[sl]=0; need_signal = 0; }} else { long sv = strtol(sstart, NULL, 10); if (sv!=0 || (sstart[0]=='0')) { if (need_signal) snprintf(aggs[ai].signal, sizeof(aggs[ai].signal), "%ld", sv); need_signal = 0; }}
                             }
                             got = 1; found_any = 1;
                           }
