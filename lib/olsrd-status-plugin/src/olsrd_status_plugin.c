@@ -4127,7 +4127,10 @@ static int h_devices_json(http_request_t *r) {
             if (!need_signal && !need_tx && !need_rx) break;
           }
         }
-        if (airos_raw) free(airos_raw); airos_raw = NULL;
+        if (airos_raw) {
+            free(airos_raw);
+            airos_raw = NULL;
+        }
       }
 
       json_buf_append(&out, &len, &cap, "\"devices\":[");
