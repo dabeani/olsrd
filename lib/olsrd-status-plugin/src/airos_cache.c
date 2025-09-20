@@ -4,6 +4,10 @@
 #include <string.h>
 #include <pthread.h>
 #include <ctype.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 /* Simple in-memory storage: dynamic arrays of entries. Each entry holds ip and mac keys and station data. */
 typedef struct {
@@ -24,7 +28,12 @@ static int read_file(const char *path, char **out, size_t *out_n, time_t *out_mt
   FILE *f = fopen(path, "rb");
   if (!f) return -1;
   if (out_mtime) {
-    struct stat st; if (fstat(fileno(f), &st) == 0) *out_mtime = st.st_mtime; else *out_mtime = 0;
+    struct stat st;
+    if (fstat(fileno(f), &st) == 0) {
+      *out_mtime = st.st_mtime;
+    } else {
+      *out_mtime = 0;
+    }
   }
   if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return -1; }
   long sz = ftell(f); if (sz < 0) { fclose(f); return -1; }
@@ -74,8 +83,13 @@ static const char *find_key(const char *obj_b, const char *obj_e, const char *ke
     size_t sl = (size_t)(qend - q);
     if (sl == klen && strncmp(q, key, klen) == 0) {
       /* move to ':' */
-      const char *c = qend + 1; while (c < obj_e && *c && *c != ':') c++;
-      if (c >= obj_e || *c != ':') return NULL; c++;
+      const char *c = qend + 1;
+      while (c < obj_e && *c && *c != ':')
+        c++;
+      if (c >= obj_e || *c != ':') {
+        return NULL;
+      }
+      c++;
       return skipws(c, obj_e);
     }
     p = qend + 1;
@@ -138,7 +152,11 @@ static void parse_airos(const char *buf, size_t n) {
           if (g_entries_n + 1 > g_entries_cap) {
             size_t newcap = g_entries_cap ? g_entries_cap * 2 : 64;
             airos_entry_t *ne = realloc(g_entries, newcap * sizeof(*ne));
-            if (!ne) break; g_entries = ne; g_entries_cap = newcap;
+            if (!ne) {
+              break;
+            }
+            g_entries = ne;
+            g_entries_cap = newcap;
           }
           airos_entry_t *ent = &g_entries[g_entries_n++];
           ent->ip[0]=ent->mac[0]=0; ent->info.valid = 0;
