@@ -5,11 +5,23 @@
 #include <unistd.h>
 #include <stdarg.h>
 
+/* forward declaration to satisfy -Wmissing-prototypes when this file is
+ * compiled as a separate translation unit. The function is used from
+ * other files and declared there as well. */
+int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen);
+
 /* Minimal dynamic JSON buffer helpers */
 static int json_buf_append(char **bufptr, size_t *lenptr, size_t *capptr, const char *fmt, ...) {
   va_list ap; char *t = NULL; int n;
   va_start(ap, fmt);
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
   n = vasprintf(&t, fmt, ap);
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
   va_end(ap);
   if (n < 0 || !t) return -1;
   if (*bufptr == NULL) {
