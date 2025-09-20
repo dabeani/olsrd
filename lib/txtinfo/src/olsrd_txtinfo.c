@@ -85,14 +85,20 @@ bool isCommand(const char *str, unsigned long long siw) {
       break;
 
     case SIW_NEIGHBORS:
+      /* accept short and full token for compatibility */
+      /* "/nei" (legacy short) and "/neighbors" (full) */
       cmd = "/nei";
       break;
 
     case SIW_LINKS:
+      /* accept short and full token for compatibility */
+      /* "/lin" (legacy short) and "/links" (full) */
       cmd = "/lin";
       break;
 
     case SIW_ROUTES:
+      /* accept short and full token for compatibility */
+      /* "/rou" (legacy short) and "/routes" (full) */
       cmd = "/rou";
       break;
 
@@ -125,6 +131,7 @@ bool isCommand(const char *str, unsigned long long siw) {
       break;
 
     case SIW_VERSION:
+      /* accept both "/ver" and "/version" */
       cmd = "/ver";
       break;
 
@@ -136,7 +143,20 @@ bool isCommand(const char *str, unsigned long long siw) {
       return false;
   }
 
-  return !strcmp(str, cmd);
+  /* Allow exact match against the legacy short token or the full descriptive token.
+   * Many callers (status UI, wrappers) send either the short code or the full name.
+   */
+  if (!strcmp(str, cmd)) return true;
+
+  /* Map known full names to their short equivalents to stay compact in the code above. */
+  if (cmd && strcmp(cmd, "") != 0) {
+    if (strcmp(cmd, "/nei") == 0 && !strcmp(str, "/neighbors")) return true;
+    if (strcmp(cmd, "/lin") == 0 && !strcmp(str, "/links")) return true;
+    if (strcmp(cmd, "/rou") == 0 && !strcmp(str, "/routes")) return true;
+    if (strcmp(cmd, "/ver") == 0 && !strcmp(str, "/version")) return true;
+  }
+
+  return false;
 }
 
 void output_error(struct autobuf *abuf, unsigned int status, const char * req __attribute__((unused)), bool http_headers) {
