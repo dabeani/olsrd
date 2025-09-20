@@ -5591,6 +5591,8 @@ void olsrd_get_plugin_parameters(const struct olsrd_plugin_parameters **params, 
 }
 
 int olsrd_plugin_init(void) {
+  fprintf(stderr, "[status-plugin] DEBUG: olsrd_plugin_init called\n");
+  fflush(stderr);
   log_asset_permissions();
   /* detect availability of optional external tools without failing startup */
   const char *tracer_candidates[] = { "/usr/sbin/traceroute", "/bin/traceroute", "/usr/bin/traceroute", "/usr/local/bin/traceroute", NULL };
