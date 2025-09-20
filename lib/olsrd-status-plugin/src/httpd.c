@@ -478,8 +478,8 @@ static void *connection_worker(void *arg) {
       int idx = 0; http_handler_node_t *it = g_handlers;
       while (it && idx < handler_count) {
         /* copy route and function pointer */
-        strncpy(snapshot[idx].route, it->route, sizeof(snapshot[idx].route)-1);
-        snapshot[idx].route[sizeof(snapshot[idx].route)-1] = '\0';
+  /* Use snprintf to avoid -Wstringop-truncation warnings and ensure termination */
+  snprintf(snapshot[idx].route, sizeof(snapshot[idx].route), "%s", it->route);
         snapshot[idx].fn = it->fn;
         idx++; it = it->next;
       }
