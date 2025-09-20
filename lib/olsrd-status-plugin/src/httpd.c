@@ -309,13 +309,51 @@ int http_printf(http_request_t *r, const char *fmt, ...) {
   va_end(ap);
   if (n > 0) {
     if (r->hdr_pending) {
+      /* Use writev and loop to handle partial writes reliably */
       struct iovec iov[2];
       iov[0].iov_base = r->hdr_buf; iov[0].iov_len = r->hdr_len;
       iov[1].iov_base = b; iov[1].iov_len = (size_t)n;
-      ssize_t _rv3 = writev(r->fd, iov, 2); (void)_rv3;
+      size_t total_to_write = iov[0].iov_len + iov[1].iov_len;
+      size_t total_written = 0;
+      while (total_written < total_to_write) {
+        ssize_t rv = writev(r->fd, iov, 2);
+        if (rv < 0) {
+          if (errno == EINTR) continue;
+          if (errno == EAGAIN || errno == EWOULDBLOCK) { usleep(1000); continue; }
+          break;
+        }
+        total_written += (size_t)rv;
+        if ((size_t)rv >= iov[0].iov_len) {
+          /* consumed header part */
+          size_t hdr_consumed = iov[0].iov_len;
+          size_t body_consumed = (size_t)rv - hdr_consumed;
+          iov[0].iov_base = NULL; iov[0].iov_len = 0;
+          if (body_consumed >= iov[1].iov_len) {
+            iov[1].iov_base = NULL; iov[1].iov_len = 0;
+          } else {
+            iov[1].iov_base = (void*)((char*)iov[1].iov_base + body_consumed);
+            iov[1].iov_len -= body_consumed;
+          }
+        } else {
+          /* only part of header consumed */
+          size_t hdr_consumed = (size_t)rv;
+          iov[0].iov_base = (void*)((char*)iov[0].iov_base + hdr_consumed);
+          iov[0].iov_len -= hdr_consumed;
+        }
+      }
       r->hdr_pending = 0; r->hdr_len = 0;
     } else {
-      ssize_t _rv3 = write(r->fd, b, (size_t)n); (void)_rv3;
+      /* Loop on write to ensure full buffer is sent */
+      size_t off = 0;
+      while (off < (size_t)n) {
+        ssize_t rv = write(r->fd, b + off, (size_t)n - off);
+        if (rv < 0) {
+          if (errno == EINTR) continue;
+          if (errno == EAGAIN || errno == EWOULDBLOCK) { usleep(1000); continue; }
+          break;
+        }
+        off += (size_t)rv;
+      }
     }
   }
   return n;
