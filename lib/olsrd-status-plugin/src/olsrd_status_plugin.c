@@ -4646,7 +4646,7 @@ static int h_nodedb(http_request_t *r) {
       char tbuf[64]; format_rfc1123_time(g_nodedb_last_fetch, tbuf, sizeof(tbuf)); http_printf(r, "Last-Modified: %s\r\n", tbuf);
     }
     /* ETag: weak tag based on length + last_fetch to allow conditional GET */
-    http_printf(r,"ETag: \"%zx-%ld\"\r\n\r\n", g_nodedb_cached_len, g_nodedb_last_fetch);
+  http_printf(r,"ETag: \"%zx-%lld\"\r\n\r\n", g_nodedb_cached_len, (long long)g_nodedb_last_fetch);
   http_write(r,g_nodedb_cached,g_nodedb_cached_len); pthread_mutex_unlock(&g_nodedb_lock); return 0; }
   pthread_mutex_unlock(&g_nodedb_lock);
   /* Debug: return error info instead of empty JSON */
