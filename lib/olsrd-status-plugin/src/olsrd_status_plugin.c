@@ -3868,15 +3868,121 @@ static int h_devices_json(http_request_t *r) {
   if (!have_ud) {
     json_buf_append(&out, &len, &cap, "\"devices\":[]");
   } else if (!have_arp) {
-    /* Simple case: only UBNT devices present -> filter entire array in one go */
+    /* Simple case: only UBNT devices present. Parse the normalized UBNT
+     * JSON array and aggregate entries by hostname (fallback to hwaddr/ip).
+     * For each aggregated device, combine all distinct IPv4 addresses into
+     * a single comma-separated string and similarly collect hwaddrs.
+     */
     if (udcopy) {
-      size_t flen = 0; char *filtered = filter_devices_array(udcopy, want_lite ? 1 : 0, 1, &flen);
-      if (filtered) {
-        json_buf_append(&out, &len, &cap, "\"devices\":%s", filtered);
-        free(filtered);
-      } else {
-        json_buf_append(&out, &len, &cap, "\"devices\":%s", udcopy);
+      /* lightweight in-memory aggregation */
+      #define MAX_AGG_DEV 256
+      struct agg_dev {
+        char key[256]; /* aggregation key (hostname or fallback) */
+        char hostname[256];
+        char ips[2048];
+        char hw[512];
+        char product[128];
+        char uptime[64];
+        char mode[64];
+        char essid[128];
+        char firmware[256];
+        char signal[64];
+        char tx_rate[64];
+        char rx_rate[64];
+        int used;
+      } aggs[MAX_AGG_DEV];
+      memset(aggs, 0, sizeof(aggs));
+      int agg_count = 0;
+
+      const char *s = udcopy; while (*s && isspace((unsigned char)*s)) s++; if (*s == '[') s++;
+      const char *e = udcopy + udlen; while (e > s && isspace((unsigned char)*(e-1))) e--; if (e > s && *(e-1) == ']') e--;
+      const char *p = s;
+      while (p < e) {
+        while (p < e && isspace((unsigned char)*p)) p++;
+        if (p < e && *p == ',') { p++; continue; }
+        if (p >= e) break;
+        if (*p == '{') {
+          const char *q = p; int depth = 0;
+          while (q < e) { if (*q == '{') depth++; else if (*q == '}') { depth--; if (depth == 0) { q++; break; } } q++; }
+          if (q <= p) break;
+          /* Extract fields of interest from p..q */
+          char tmp_host[256] = ""; char tmp_ip[128] = ""; char tmp_hw[128] = ""; char tmp_product[128] = ""; char tmp_uptime[64] = ""; char tmp_mode[64] = ""; char tmp_essid[128] = ""; char tmp_fw[256] = ""; char tmp_signal[64] = ""; char tmp_tx[64] = ""; char tmp_rx[64] = "";
+          char *valptr = NULL; size_t vlen = 0;
+          if (find_json_string_value(p, "hostname", &valptr, &vlen) && valptr && vlen>0) { size_t c = vlen < sizeof(tmp_host)-1 ? vlen : sizeof(tmp_host)-1; memcpy(tmp_host, valptr, c); tmp_host[c]=0; }
+          if (find_json_string_value(p, "ipv4", &valptr, &vlen) && valptr && vlen>0) { size_t c = vlen < sizeof(tmp_ip)-1 ? vlen : sizeof(tmp_ip)-1; memcpy(tmp_ip, valptr, c); tmp_ip[c]=0; }
+          if (find_json_string_value(p, "ip", &valptr, &vlen) && (!tmp_ip[0]) && valptr && vlen>0) { size_t c = vlen < sizeof(tmp_ip)-1 ? vlen : sizeof(tmp_ip)-1; memcpy(tmp_ip, valptr, c); tmp_ip[c]=0; }
+          if (find_json_string_value(p, "hwaddr", &valptr, &vlen) && valptr && vlen>0) { size_t c = vlen < sizeof(tmp_hw)-1 ? vlen : sizeof(tmp_hw)-1; memcpy(tmp_hw, valptr, c); tmp_hw[c]=0; }
+          if (find_json_string_value(p, "product", &valptr, &vlen) && valptr && vlen>0) { size_t c = vlen < sizeof(tmp_product)-1 ? vlen : sizeof(tmp_product)-1; memcpy(tmp_product, valptr, c); tmp_product[c]=0; }
+          if (find_json_string_value(p, "uptime", &valptr, &vlen) && valptr && vlen>0) { size_t c = vlen < sizeof(tmp_uptime)-1 ? vlen : sizeof(tmp_uptime)-1; memcpy(tmp_uptime, valptr, c); tmp_uptime[c]=0; }
+          if (find_json_string_value(p, "mode", &valptr, &vlen) && valptr && vlen>0) { size_t c = vlen < sizeof(tmp_mode)-1 ? vlen : sizeof(tmp_mode)-1; memcpy(tmp_mode, valptr, c); tmp_mode[c]=0; }
+          if (find_json_string_value(p, "essid", &valptr, &vlen) && valptr && vlen>0) { size_t c = vlen < sizeof(tmp_essid)-1 ? vlen : sizeof(tmp_essid)-1; memcpy(tmp_essid, valptr, c); tmp_essid[c]=0; }
+          if (find_json_string_value(p, "firmware", &valptr, &vlen) && valptr && vlen>0) { size_t c = vlen < sizeof(tmp_fw)-1 ? vlen : sizeof(tmp_fw)-1; memcpy(tmp_fw, valptr, c); tmp_fw[c]=0; }
+          if (find_json_string_value(p, "signal", &valptr, &vlen) && valptr && vlen>0) { size_t c = vlen < sizeof(tmp_signal)-1 ? vlen : sizeof(tmp_signal)-1; memcpy(tmp_signal, valptr, c); tmp_signal[c]=0; }
+          if (find_json_string_value(p, "tx_rate", &valptr, &vlen) && valptr && vlen>0) { size_t c = vlen < sizeof(tmp_tx)-1 ? vlen : sizeof(tmp_tx)-1; memcpy(tmp_tx, valptr, c); tmp_tx[c]=0; }
+          if (find_json_string_value(p, "rx_rate", &valptr, &vlen) && valptr && vlen>0) { size_t c = vlen < sizeof(tmp_rx)-1 ? vlen : sizeof(tmp_rx)-1; memcpy(tmp_rx, valptr, c); tmp_rx[c]=0; }
+
+          /* Determine aggregation key: prefer hostname, else hwaddr, else ip */
+          char keybuf[256] = "";
+          if (tmp_host[0]) snprintf(keybuf, sizeof(keybuf), "%s", tmp_host);
+          else if (tmp_hw[0]) snprintf(keybuf, sizeof(keybuf), "hw:%s", tmp_hw);
+          else if (tmp_ip[0]) snprintf(keybuf, sizeof(keybuf), "ip:%s", tmp_ip);
+          else snprintf(keybuf, sizeof(keybuf), "anon:%p", (void*)p);
+
+          /* find or create agg entry */
+          int ai = -1;
+          for (int i = 0; i < agg_count; i++) { if (strcmp(aggs[i].key, keybuf) == 0) { ai = i; break; } }
+          if (ai < 0 && agg_count < MAX_AGG_DEV) { ai = agg_count++; memset(&aggs[ai], 0, sizeof(aggs[ai])); strncpy(aggs[ai].key, keybuf, sizeof(aggs[ai].key)-1); aggs[ai].used = 1; }
+          if (ai >= 0) {
+            /* hostname */ if (tmp_host[0] && !aggs[ai].hostname[0]) strncpy(aggs[ai].hostname, tmp_host, sizeof(aggs[ai].hostname)-1);
+            /* add IP if not already present */ if (tmp_ip[0]) {
+              if (aggs[ai].ips[0] == '\0') snprintf(aggs[ai].ips, sizeof(aggs[ai].ips), "%s", tmp_ip);
+              else {
+                /* simple duplicate check */ if (strstr(aggs[ai].ips, tmp_ip) == NULL) {
+                  strncat(aggs[ai].ips, ", ", sizeof(aggs[ai].ips) - strlen(aggs[ai].ips) - 1);
+                  strncat(aggs[ai].ips, tmp_ip, sizeof(aggs[ai].ips) - strlen(aggs[ai].ips) - 1);
+                }
+              }
+            }
+            /* add hwaddr */ if (tmp_hw[0]) {
+              if (aggs[ai].hw[0] == '\0') snprintf(aggs[ai].hw, sizeof(aggs[ai].hw), "%s", tmp_hw);
+              else { if (strstr(aggs[ai].hw, tmp_hw) == NULL) { strncat(aggs[ai].hw, ", ", sizeof(aggs[ai].hw) - strlen(aggs[ai].hw) - 1); strncat(aggs[ai].hw, tmp_hw, sizeof(aggs[ai].hw) - strlen(aggs[ai].hw) - 1); } }
+            }
+            /* prefer non-empty other fields */
+            if (!aggs[ai].product[0] && tmp_product[0]) strncpy(aggs[ai].product, tmp_product, sizeof(aggs[ai].product)-1);
+            if (!aggs[ai].uptime[0] && tmp_uptime[0]) strncpy(aggs[ai].uptime, tmp_uptime, sizeof(aggs[ai].uptime)-1);
+            if (!aggs[ai].mode[0] && tmp_mode[0]) strncpy(aggs[ai].mode, tmp_mode, sizeof(aggs[ai].mode)-1);
+            if (!aggs[ai].essid[0] && tmp_essid[0]) strncpy(aggs[ai].essid, tmp_essid, sizeof(aggs[ai].essid)-1);
+            if (!aggs[ai].firmware[0] && tmp_fw[0]) strncpy(aggs[ai].firmware, tmp_fw, sizeof(aggs[ai].firmware)-1);
+            if (!aggs[ai].signal[0] && tmp_signal[0]) strncpy(aggs[ai].signal, tmp_signal, sizeof(aggs[ai].signal)-1);
+            if (!aggs[ai].tx_rate[0] && tmp_tx[0]) strncpy(aggs[ai].tx_rate, tmp_tx, sizeof(aggs[ai].tx_rate)-1);
+            if (!aggs[ai].rx_rate[0] && tmp_rx[0]) strncpy(aggs[ai].rx_rate, tmp_rx, sizeof(aggs[ai].rx_rate)-1);
+          }
+
+          p = q; continue;
+        }
+        p++;
       }
+
+      /* Emit aggregated array */
+      json_buf_append(&out, &len, &cap, "\"devices\":[");
+      for (int i = 0; i < agg_count; i++) {
+        if (i > 0) json_buf_append(&out, &len, &cap, ",");
+        /* Build object */
+        json_buf_append(&out, &len, &cap, "{");
+        /* ipv4 */ json_buf_append(&out, &len, &cap, "\"ipv4\":"); json_append_escaped(&out, &len, &cap, aggs[i].ips);
+        /* hwaddr */ json_buf_append(&out, &len, &cap, ",\"hwaddr\":"); json_append_escaped(&out, &len, &cap, aggs[i].hw);
+        /* hostname */ json_buf_append(&out, &len, &cap, ",\"hostname\":"); json_append_escaped(&out, &len, &cap, aggs[i].hostname);
+        /* product, uptime, mode, essid, firmware */ json_buf_append(&out, &len, &cap, ",\"product\":"); json_append_escaped(&out, &len, &cap, aggs[i].product);
+        json_buf_append(&out, &len, &cap, ",\"uptime\":"); json_append_escaped(&out, &len, &cap, aggs[i].uptime);
+        json_buf_append(&out, &len, &cap, ",\"mode\":"); json_append_escaped(&out, &len, &cap, aggs[i].mode);
+        json_buf_append(&out, &len, &cap, ",\"essid\":"); json_append_escaped(&out, &len, &cap, aggs[i].essid);
+        json_buf_append(&out, &len, &cap, ",\"firmware\":"); json_append_escaped(&out, &len, &cap, aggs[i].firmware);
+        /* signal, tx_rate, rx_rate and source */ json_buf_append(&out, &len, &cap, ",\"signal\":"); json_append_escaped(&out, &len, &cap, aggs[i].signal);
+        json_buf_append(&out, &len, &cap, ",\"tx_rate\":"); json_append_escaped(&out, &len, &cap, aggs[i].tx_rate);
+        json_buf_append(&out, &len, &cap, ",\"rx_rate\":"); json_append_escaped(&out, &len, &cap, aggs[i].rx_rate);
+        json_buf_append(&out, &len, &cap, ",\"source\":\"ubnt\"}");
+      }
+      json_buf_append(&out, &len, &cap, "]");
     } else {
       json_buf_append(&out, &len, &cap, "\"devices\":[]");
     }
