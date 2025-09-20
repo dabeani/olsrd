@@ -3849,7 +3849,6 @@ static int h_status_lite(http_request_t *r) {
     }
   }
   APP_L("}\n");
-  APP_L("}\n");
   gettimeofday(&t_end, NULL);
 
   /* Cache the freshly built payload for subsequent fast responses */
