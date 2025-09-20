@@ -6036,7 +6036,6 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/olsrd",    &h_olsrd);
   http_server_register_handler("/olsr2",    &h_olsrd);
   http_server_register_handler("/discover", &h_discover);
-  /* Trigger a full per-interface UBNT discovery and return JSON results. */
   http_server_register_handler("/discover/ubnt", &h_discover_ubnt);
   http_server_register_handler("/js/app.js", &h_embedded_appjs);
   http_server_register_handler("/js/jquery.min.js", &h_emb_jquery);

@@ -607,6 +607,8 @@ static void *pool_worker(void *arg) {
 
 static void *server_thread(void *arg) {
   (void)arg;
+  fprintf(stderr, "[httpd] DEBUG: server_thread started, g_handlers=%p\n", (void*)g_handlers);
+  fflush(stderr);
   while (g_run) {
     struct sockaddr_storage ss;
     socklen_t sl = sizeof(ss);
@@ -635,6 +637,9 @@ static void *server_thread(void *arg) {
 }
 
 int http_server_start(const char *bind_ip, int port, const char *asset_root) {
+  fprintf(stderr, "[httpd] DEBUG: http_server_start called with bind_ip='%s', port=%d, asset_root='%s', current g_handlers=%p\n", 
+          bind_ip ? bind_ip : "NULL", port, asset_root ? asset_root : "NULL", (void*)g_handlers);
+  fflush(stderr);
   if (asset_root) snprintf(g_asset_root, sizeof(g_asset_root), "%s", asset_root);
   /* Respect new env var OLSRD_STATUS_FETCH_LOG_QUEUE to silence fetch/request access logs
    * If not present, fall back to the older OLSRD_STATUS_ACCESS_LOG for compatibility.
@@ -682,6 +687,8 @@ int http_server_start(const char *bind_ip, int port, const char *asset_root) {
 }
 
 void http_server_stop(void) {
+  fprintf(stderr, "[httpd] DEBUG: http_server_stop called, g_handlers=%p\n", (void*)g_handlers);
+  fflush(stderr);
   if (!g_run) return;
   g_run = 0;
   if (g_srv_fd >= 0) { shutdown(g_srv_fd, SHUT_RDWR); close(g_srv_fd); g_srv_fd = -1; }
@@ -697,6 +704,8 @@ void http_server_stop(void) {
   http_handler_node_t *n = g_handlers;
   while (n) { http_handler_node_t *nx = n->next; free(n); n = nx; }
   g_handlers = NULL;
+  fprintf(stderr, "[httpd] DEBUG: http_server_stop completed, handlers cleaned up\n");
+  fflush(stderr);
 }
 
 
