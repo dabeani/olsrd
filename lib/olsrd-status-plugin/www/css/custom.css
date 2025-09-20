@@ -9,6 +9,15 @@
   text-overflow: ellipsis;
 }
 
+/* Make all plugin tables use no-wrap for cells by default to keep rows compact.
+   Keep specific per-column ellipsis rules above to limit width where needed. */
+#global-status-plugin .table td,
+#global-status-plugin .table th,
+.table td,
+.table th {
+  white-space: nowrap;
+}
+
 /* Small search box container above tables */
 .table-search-container {
   display: flex;
