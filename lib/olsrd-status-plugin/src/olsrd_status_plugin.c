@@ -652,6 +652,31 @@ typedef struct { char *url; char *body; size_t len; time_t ts; } local_cache_ent
 static local_cache_entry_t g_local_cache[LOCAL_CACHE_ENTRIES];
 static pthread_mutex_t g_local_cache_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* Simple cache for /status/lite responses */
+static char *g_status_lite_cache = NULL;
+static size_t g_status_lite_cache_len = 0;
+static time_t g_status_lite_cache_ts = 0;
+static pthread_mutex_t g_status_lite_cache_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_status_lite_ttl_s = 30; /* seconds (tuned from 3 -> 30 per request) */
+
+/* Background refresher: fetch /status/lite locally and update cache */
+static void *status_lite_refresher(void *arg) {
+  (void)arg;
+  char *tmp = NULL; size_t tlen = 0;
+  char url[256]; snprintf(url, sizeof(url), "http://127.0.0.1:%d/status/lite", g_port);
+  /* short timeout for local call */
+  if (util_http_get_url_local(url, &tmp, &tlen, 2) == 0 && tmp && tlen > 0) {
+    pthread_mutex_lock(&g_status_lite_cache_lock);
+    if (g_status_lite_cache) { free(g_status_lite_cache); g_status_lite_cache = NULL; g_status_lite_cache_len = 0; }
+    g_status_lite_cache = tmp; g_status_lite_cache_len = tlen; g_status_lite_cache_ts = time(NULL);
+    pthread_mutex_unlock(&g_status_lite_cache_lock);
+    /* tmp ownership transferred to cache */
+  } else {
+    if (tmp) free(tmp);
+  }
+  return NULL;
+}
+
 static int cached_util_http_get_url_local(const char *url, char **out, size_t *outlen, int timeout_sec) {
   if (!url || !out || !outlen) return -1;
   time_t nowt = time(NULL);
@@ -3496,6 +3521,26 @@ static int h_status_compat(http_request_t *r) {
 
 /* --- Lightweight /status/lite (omit OLSR link/neighbor discovery for faster initial load) --- */
 static int h_status_lite(http_request_t *r) {
+  /* Fast-path: serve cached snapshot if fresh */
+  time_t nowt = time(NULL);
+  pthread_mutex_lock(&g_status_lite_cache_lock);
+  if (g_status_lite_cache && g_status_lite_cache_len > 0 && (nowt - g_status_lite_cache_ts) <= g_status_lite_ttl_s) {
+    http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, g_status_lite_cache, g_status_lite_cache_len);
+    pthread_mutex_unlock(&g_status_lite_cache_lock);
+    return 0;
+  }
+  /* If cache present but stale, return stale copy and spawn background refresh */
+  if (g_status_lite_cache && g_status_lite_cache_len > 0) {
+    http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, g_status_lite_cache, g_status_lite_cache_len);
+    pthread_t th; if (pthread_create(&th, NULL, status_lite_refresher, NULL) == 0) pthread_detach(th);
+    pthread_mutex_unlock(&g_status_lite_cache_lock);
+    return 0;
+  }
+  pthread_mutex_unlock(&g_status_lite_cache_lock);
+
+  /* No cached copy: build payload synchronously (may be slower on first call) */
+  struct timeval t_start, t_before_devices, t_after_devices, t_end;
+  gettimeofday(&t_start, NULL);
   char *buf = NULL; size_t cap = 4096, len = 0; buf = malloc(cap); if(!buf){ send_json(r,"{}\n"); return 0; } buf[0]=0;
   #define APP_L(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { free(buf); send_json(r,"{}\n"); return 0; } } while(0)
   APP_L("{");
@@ -3556,6 +3601,8 @@ static int h_status_lite(http_request_t *r) {
   APP_L(",\"hostname\":"); json_append_escaped(&buf,&len,&cap,def_hostname);
   APP_L("},");
   /* devices (mode-controlled): 0=omit, 1=full merged array (current default), 2=summary counts only */
+  gettimeofday(&t_before_devices, NULL);
+  /* build devices depending on g_status_devices_mode below */
   if (g_status_devices_mode == 1) {
     /* full merged array as before */
     char *ud = NULL; size_t udn = 0;
@@ -3793,6 +3840,28 @@ static int h_status_lite(http_request_t *r) {
     }
   }
   APP_L("}\n");
+  APP_L("}\n");
+  gettimeofday(&t_end, NULL);
+
+  /* Cache the freshly built payload for subsequent fast responses */
+  pthread_mutex_lock(&g_status_lite_cache_lock);
+  if (g_status_lite_cache) { free(g_status_lite_cache); g_status_lite_cache = NULL; g_status_lite_cache_len = 0; }
+  g_status_lite_cache = malloc(len + 1);
+  if (g_status_lite_cache) {
+    memcpy(g_status_lite_cache, buf, len);
+    g_status_lite_cache[len] = '\0';
+    g_status_lite_cache_len = len;
+    g_status_lite_cache_ts = time(NULL);
+  }
+  pthread_mutex_unlock(&g_status_lite_cache_lock);
+
+  if (g_log_request_debug) {
+    double pre_devices_ms = (t_before_devices.tv_sec - t_start.tv_sec) * 1000.0 + (t_before_devices.tv_usec - t_start.tv_usec) / 1000.0;
+    double devices_ms = (t_after_devices.tv_sec - t_before_devices.tv_sec) * 1000.0 + (t_after_devices.tv_usec - t_before_devices.tv_usec) / 1000.0;
+    double total_ms = (t_end.tv_sec - t_start.tv_sec) * 1000.0 + (t_end.tv_usec - t_start.tv_usec) / 1000.0;
+    fprintf(stderr, "[status-plugin] h_status_lite timings: pre_devices=%.1fms devices=%.1fms total=%.1fms len=%zu\n", pre_devices_ms, devices_ms, total_ms, len);
+  }
+
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); return 0;
 }
 

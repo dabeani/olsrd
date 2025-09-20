@@ -1,20 +1,10 @@
-#pragma once
-/*
+/**
  * Minimal UBNT discovery v1 client (UDP/10001).
  *
- * This is a clean-room, best-effort reimplementation that sends the common
- * 4-byte v1 probe and parses replies as generic TLVs when possible.
- * It is designed to be embedded in a C plugin (e.g., olsrd status plugin).
- *
- * API:
- *   - ubnt_discover_send(int sock, const struct sockaddr_in *dst)
- *   - ubnt_discover_recv(int sock, char *ip, size_t iplen, struct ubnt_kv *kv, size_t *kvcount)
- *
- * Notes:
- *   - Replies vary across device lines/firmware. We parse TLV conservatively and
- *     also surface raw payload for debugging if needed.
- *   - Known UDP port: 10001. Broadcast address: 255.255.255.255
+ * This header provides a small API used by the status plugin to probe
+ * and parse UBNT discovery replies. Keep definitions minimal and safe.
  */
+#pragma once
 #include <stdint.h>
 #include <stddef.h>
 #include <netinet/in.h>
