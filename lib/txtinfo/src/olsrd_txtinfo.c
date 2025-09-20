@@ -154,6 +154,13 @@ bool isCommand(const char *str, unsigned long long siw) {
     if (strcmp(cmd, "/lin") == 0 && !strcmp(str, "/links")) return true;
     if (strcmp(cmd, "/rou") == 0 && !strcmp(str, "/routes")) return true;
     if (strcmp(cmd, "/ver") == 0 && !strcmp(str, "/version")) return true;
+    /* Accept full topology token "/topology" in addition to legacy "/top" */
+    if (strcmp(cmd, "/top") == 0 && !strcmp(str, "/topology")) return true;
+    /* Additional long-name mappings to mirror other plugins */
+    if (strcmp(cmd, "/con") == 0 && !strcmp(str, "/olsrd.conf")) return true;
+    if (strcmp(cmd, "/gat") == 0 && !strcmp(str, "/gateways")) return true;
+    if (strcmp(cmd, "/int") == 0 && !strcmp(str, "/interfaces")) return true;
+    if (strcmp(cmd, "/2ho") == 0 && !strcmp(str, "/2hop")) return true;
   }
 
   return false;
