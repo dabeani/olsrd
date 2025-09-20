@@ -40,6 +40,7 @@
 #include "util.h"
 #include "olsrd_plugin.h"
 #include "ubnt_discover.h"
+#include "airos_cache.h"
 
 /* Ensure UBNT_DEBUG is defined when compiling this translation unit.
  * rev/discover/ubnt_discover.c defines a compile-time UBNT_DEBUG fallback
@@ -4073,20 +4074,17 @@ static int h_devices_json(http_request_t *r) {
       }
 
       /* Emit aggregated array */
-      /* Try to enrich aggs with airos station data from /tmp/10-all.json when present */
-      char *airos_raw = NULL; size_t airos_n = 0;
-      if (path_exists("/tmp/10-all.json") && util_read_file("/tmp/10-all.json", &airos_raw, &airos_n) == 0 && airos_raw && airos_n > 0) {
-        char *airos_end = airos_raw + airos_n;
+      /* Enrich aggs with airos station data via the safe airos_cache API (no raw parsing here) */
+      if (airos_cache_refresh_if_stale() == 0) {
         for (int ai = 0; ai < agg_count; ai++) {
           int need_signal = (aggs[ai].signal[0] == '\0');
           int need_tx = (aggs[ai].tx_rate[0] == '\0');
           int need_rx = (aggs[ai].rx_rate[0] == '\0');
           if (!need_signal && !need_tx && !need_rx) continue;
-          /* try each IP in the comma-separated ips list */
+          /* try lookup by IPs first */
           const char *ips = aggs[ai].ips; const char *ipcur = ips;
           char ipbuf[64]; int found_any = 0;
           while (ipcur && *ipcur) {
-            /* extract token */
             while (*ipcur && isspace((unsigned char)*ipcur)) ipcur++;
             const char *ipend = ipcur;
             while (ipend && *ipend && *ipend != ',') ipend++;
@@ -4095,78 +4093,40 @@ static int h_devices_json(http_request_t *r) {
             if (il > 0) { memcpy(ipbuf, ipcur, il); ipbuf[il]=0; /* trim */ size_t t = il; while (t>0 && isspace((unsigned char)ipbuf[t-1])) ipbuf[--t]=0; }
             else ipbuf[0]=0;
             if (ipbuf[0]) {
-              /* find IP object in airos_raw: "<ip>" */
-              char pat[128]; snprintf(pat, sizeof(pat), "\"%s\"", ipbuf);
-              char *ippos = strstr(airos_raw, pat);
-              if (ippos && ippos < airos_end) {
-                /* look for connections array after ippos */
-                char *connpos = strstr(ippos, "\"connections\"");
-                if (connpos && connpos < airos_end) {
-                  char *br = strchr(connpos, '[');
-                  if (br && br < airos_end) {
-                    /* find closing ] */
-                    char *ebr = br; int depth = 0;
-                    while (ebr < airos_end && *ebr) {
-                      if (*ebr == '[') depth++;
-                      else if (*ebr == ']') {
-                        depth--;
-                        if (depth == 0) { ebr++; break; }
-                      }
-                      ebr++;
-                    }
-                    if (ebr && ebr > br && ebr <= airos_end) {
-                      /* try to match by MAC first */
-                      int got = 0;
-                      /* prepare hw list */
-                      char hwcopy[512]; hwcopy[0]=0; strncpy(hwcopy, aggs[ai].hw, sizeof(hwcopy)-1); hwcopy[sizeof(hwcopy)-1]=0;
-                      /* split hw by commas and try each */
-                      char *hwcur = hwcopy;
-                      while (hwcur && *hwcur && !got) {
-                        /* trim leading spaces */ while (*hwcur && isspace((unsigned char)*hwcur)) hwcur++;
-                        char *hwend = hwcur; while (*hwend && *hwend != ',') hwend++;
-                        char mactok[64]; size_t mlen = (size_t)(hwend - hwcur); if (mlen >= sizeof(mactok)) mlen = sizeof(mactok)-1; if (mlen>0) { memcpy(mactok, hwcur, mlen); mactok[mlen]=0; /* trim */ size_t tt = mlen; while (tt>0 && isspace((unsigned char)mactok[tt-1])) mactok[--tt]=0; }
-                        else mactok[0]=0;
-                        if (mactok[0]) {
-                          char macpat[128]; snprintf(macpat, sizeof(macpat), "\"mac\":\"%s\"", mactok);
-                          char *mpos = strstr(br, macpat);
-                          if (mpos && mpos < airos_end) {
-                            /* find start of station object */
-                            char *st = mpos; while (st > br && *st != '{') st--; if (st <= br) st = mpos;
-                            /* search tx/rx/signal within station */
-                            char *txp = strstr(st, "\"tx\":"); if (txp && txp < airos_end) { long v = strtol(txp+5, NULL, 10); if (v>=0 && need_tx) { snprintf(aggs[ai].tx_rate, sizeof(aggs[ai].tx_rate), "%ld", v); need_tx = 0; }}
-                            char *rxp = strstr(st, "\"rx\":"); if (rxp && rxp < airos_end) { long v = strtol(rxp+5, NULL, 10); if (v>=0 && need_rx) { snprintf(aggs[ai].rx_rate, sizeof(aggs[ai].rx_rate), "%ld", v); need_rx = 0; }}
-                            char *sigp = strstr(st, "\"signal\":"); if (sigp && sigp < airos_end) {
-                              /* signal may be number or string */
-                              char *sstart = sigp + strlen("\"signal\":"); while (*sstart && isspace((unsigned char)*sstart)) sstart++; if (*sstart == '"') { sstart++; char *send = strchr(sstart, '"'); if (send && send < airos_end) { size_t sl = (size_t)(send - sstart); if (sl >= sizeof(aggs[ai].signal)) sl = sizeof(aggs[ai].signal)-1; memcpy(aggs[ai].signal, sstart, sl); aggs[ai].signal[sl]=0; need_signal = 0; }} else { long sv = strtol(sstart, NULL, 10); if (sv!=0 || (sstart[0]=='0')) { if (need_signal) snprintf(aggs[ai].signal, sizeof(aggs[ai].signal), "%ld", sv); need_signal = 0; }}
-                            }
-                            got = 1; found_any = 1;
-                          }
-                        }
-                        if (*hwend == ',') hwcur = hwend + 1; else break;
-                      }
-                      /* fallback: if no MAC match, use first station entry */
-                      if (!found_any) {
-                        char *st = br; while (st < ebr && *st && *st != '{') st++; if (st && st < ebr) {
-                          char *txp = strstr(st, "\"tx\":"); if (txp && txp < ebr) { long v = strtol(txp+5, NULL, 10); if (v>=0 && need_tx) { snprintf(aggs[ai].tx_rate, sizeof(aggs[ai].tx_rate), "%ld", v); need_tx = 0; }}
-                          char *rxp = strstr(st, "\"rx\":"); if (rxp && rxp < ebr) { long v = strtol(rxp+5, NULL, 10); if (v>=0 && need_rx) { snprintf(aggs[ai].rx_rate, sizeof(aggs[ai].rx_rate), "%ld", v); need_rx = 0; }}
-                          char *sigp = strstr(st, "\"signal\":"); if (sigp && sigp < ebr) {
-                            char *sstart = sigp + strlen("\"signal\":"); while (*sstart && isspace((unsigned char)*sstart)) sstart++; if (*sstart == '"') { sstart++; char *send = strchr(sstart, '"'); if (send && send < ebr) { size_t sl = (size_t)(send - sstart); if (sl >= sizeof(aggs[ai].signal)) sl = sizeof(aggs[ai].signal)-1; memcpy(aggs[ai].signal, sstart, sl); aggs[ai].signal[sl]=0; need_signal = 0; }} else { long sv = strtol(sstart, NULL, 10); if (sv!=0 || (sstart[0]=='0')) { if (need_signal) snprintf(aggs[ai].signal, sizeof(aggs[ai].signal), "%ld", sv); need_signal = 0; }}
-                          }
-                        }
-                      }
-                      if (!need_signal && !need_tx && !need_rx) { /* all done for this agg */ }
-                    }
-                  }
+              airos_station_t st; if (airos_lookup_by_ip(ipbuf, &st) == 0) {
+                if (st.valid) {
+                  if (need_tx && st.tx[0]) { snprintf(aggs[ai].tx_rate, sizeof(aggs[ai].tx_rate), "%s", st.tx); need_tx = 0; }
+                  if (need_rx && st.rx[0]) { snprintf(aggs[ai].rx_rate, sizeof(aggs[ai].rx_rate), "%s", st.rx); need_rx = 0; }
+                  if (need_signal && st.signal[0]) { snprintf(aggs[ai].signal, sizeof(aggs[ai].signal), "%s", st.signal); need_signal = 0; }
+                  found_any = 1;
                 }
               }
             }
             if (ipend && *ipend == ',') ipcur = ipend + 1; else break;
             if (!need_signal && !need_tx && !need_rx) break;
           }
-        }
-        if (airos_raw) {
-            free(airos_raw);
-            airos_raw = NULL;
+          /* fallback: try lookup by MACs */
+          if ((need_signal || need_tx || need_rx) && aggs[ai].hw[0]) {
+            char hwcopy[512]; hwcopy[0]=0; strncpy(hwcopy, aggs[ai].hw, sizeof(hwcopy)-1); hwcopy[sizeof(hwcopy)-1]=0;
+            char *hwcur = hwcopy;
+            while (hwcur && *hwcur) {
+              while (*hwcur && isspace((unsigned char)*hwcur)) hwcur++;
+              char *hwend = hwcur; while (*hwend && *hwend != ',') hwend++;
+              char mactok[64]; size_t mlen = (size_t)(hwend - hwcur); if (mlen >= sizeof(mactok)) mlen = sizeof(mactok)-1; if (mlen>0) { memcpy(mactok, hwcur, mlen); mactok[mlen]=0; size_t tt = mlen; while (tt>0 && isspace((unsigned char)mactok[tt-1])) mactok[--tt]=0; } else mactok[0]=0;
+              if (mactok[0]) {
+                airos_station_t st; if (airos_lookup_by_mac(mactok, &st) == 0) {
+                  if (st.valid) {
+                    if (need_tx && st.tx[0]) { snprintf(aggs[ai].tx_rate, sizeof(aggs[ai].tx_rate), "%s", st.tx); need_tx = 0; }
+                    if (need_rx && st.rx[0]) { snprintf(aggs[ai].rx_rate, sizeof(aggs[ai].rx_rate), "%s", st.rx); need_rx = 0; }
+                    if (need_signal && st.signal[0]) { snprintf(aggs[ai].signal, sizeof(aggs[ai].signal), "%s", st.signal); need_signal = 0; }
+                    found_any = 1;
+                  }
+                }
+              }
+              if (*hwend == ',') hwcur = hwend + 1; else break;
+              if (!need_signal && !need_tx && !need_rx) break;
+            }
+          }
         }
       }
 
