@@ -1836,7 +1836,7 @@ static void fetch_remote_nodedb(void) {
           if (pending_insert && strncmp(p,"\"name\"",6)==0) { /* still add hostname later if only name appears */ }
           aug[o++]=*p; p++; if(o>fn*2) break; }
         aug[o]=0;
-        if (o>0) { free(fresh); fresh=aug; fn=strlen(fresh); }
+  if (o>0) { free(fresh); fresh=aug; fn = o; }
         else free(aug);
       }
     }
