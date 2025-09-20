@@ -3682,7 +3682,11 @@ static int h_status_lite(http_request_t *r) {
   {
     unsigned long dropped=0, retries=0, successes=0;
     unsigned long unique_routes=0, unique_nodes=0;
-    METRIC_LOAD_ALL(dropped, retries, successes);
+  METRIC_LOAD_ALL(dropped, retries, successes);
+  /* 'dropped' is populated by METRIC_LOAD_ALL but not otherwise used in
+   * this handler. Cast to void to avoid -Wunused-but-set-variable warnings
+   * on compilers with -Werror or -Wunused-but-set-variable enabled. */
+  (void)dropped;
     METRIC_LOAD_UNIQUE(unique_routes, unique_nodes);
     unsigned long olsr_routes = unique_routes;
     unsigned long olsr_nodes = unique_nodes;
