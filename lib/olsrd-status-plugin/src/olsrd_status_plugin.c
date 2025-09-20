@@ -3670,7 +3670,7 @@ static int h_status_lite(http_request_t *r) {
   char lite_olsrd_path[256] = "";
   char lite_olsr2_path[256] = "";
   const char *lite_olsrd_candidates[] = { "/usr/sbin/olsrd", "/usr/bin/olsrd", "/sbin/olsrd", NULL };
-  const char *lite_olsr2_candidates[] = { "/usr/sbin/olsrd2", "/usr/bin/olsrd2", "/sbin/olsrd2", NULL };
+  const char *lite_olsr2_candidates[] = { "/usr/sbin/olsrd2", "/usr/bin/olsrd2", "/sbin/olsrd2", "/config/olsrd2/olsrd2", NULL };
   for (const char **p = lite_olsrd_candidates; *p; ++p) {
     if (path_exists(*p)) { strncpy(lite_olsrd_path, *p, sizeof(lite_olsrd_path)-1); lite_olsrd_exists = 1; break; }
   }
