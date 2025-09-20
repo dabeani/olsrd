@@ -5504,13 +5504,19 @@ static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
     char *pos = strstr(g_nodedb_cached, needle);
     if (pos) {
       char *hpos = strstr(pos, "\"hostname\":");
-      if (hpos && find_json_string_value(hpos, "hostname", &pos, &g_nodedb_cached_len)) {
-        size_t copy = g_nodedb_cached_len < outlen-1 ? g_nodedb_cached_len : outlen-1; memcpy(out, pos, copy); out[copy]=0; cache_set(g_host_cache, ipv4, out); return;
+      if (hpos) {
+        size_t vlen = 0; char *vptr = NULL;
+        if (find_json_string_value(hpos, "hostname", &vptr, &vlen)) {
+          size_t copy = vlen < outlen-1 ? vlen : outlen-1; memcpy(out, vptr, copy); out[copy]=0; cache_set(g_host_cache, ipv4, out); return;
+        }
       }
       /* fallback to "n" */
       char *npos = strstr(pos, "\"n\":");
-      if (npos && find_json_string_value(npos, "n", &pos, &g_nodedb_cached_len)) {
-        size_t copy = g_nodedb_cached_len < outlen-1 ? g_nodedb_cached_len : outlen-1; memcpy(out, pos, copy); out[copy]=0; cache_set(g_host_cache, ipv4, out); return;
+      if (npos) {
+        size_t vlen2 = 0; char *vptr2 = NULL;
+        if (find_json_string_value(npos, "n", &vptr2, &vlen2)) {
+          size_t copy = vlen2 < outlen-1 ? vlen2 : outlen-1; memcpy(out, vptr2, copy); out[copy]=0; cache_set(g_host_cache, ipv4, out); return;
+        }
       }
     }
   }
