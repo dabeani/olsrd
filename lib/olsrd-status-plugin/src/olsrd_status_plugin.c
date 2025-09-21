@@ -2390,8 +2390,13 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   if (gw_stats) { free(gw_stats); gw_stats = NULL; gw_stats_count = 0; }
 }
 
-/* plain-text parser removed: no longer supported. */
-static int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen) { (void)raw; (void)outbuf; (void)outlen; return -1; }
+/* plain-text parser implemented in separate translation unit for reuse.
+ * The standalone implementation lives in `standalone_links_parser.c` and
+ * provides a permissive parser for vendor/plain-text OLSR table dumps
+ * ("Table: Links" format). Declare it here (non-static) so the linker
+ * will pick the external symbol when available.
+ */
+int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen);
 
 
 /* UBNT discover output acquisition using internal discovery only */
