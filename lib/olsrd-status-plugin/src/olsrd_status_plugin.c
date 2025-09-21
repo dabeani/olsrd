@@ -1918,7 +1918,10 @@ static void heuristic_count_ips_in_raw(const char *raw, unsigned long *out_nodes
   /* approximate: routes ~= nodes (best-effort) */
   *out_nodes = (unsigned long)ucnt;
   *out_routes = (unsigned long)ucnt;
-  for (int i=0;i<ucnt;i++) free(uniq[i]); free(uniq);
+  for (int i = 0; i < ucnt; i++) {
+    free(uniq[i]);
+  }
+  free(uniq);
 }
 
 /* Minimal ARP enrichment: look up MAC and reverse DNS for IPv4 */
