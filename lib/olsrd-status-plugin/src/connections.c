@@ -6,6 +6,10 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <ifaddrs.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include "util.h"
 
 static void strtoupper(char *s){ for(;*s;++s) *s=toupper((unsigned char)*s); }
@@ -67,6 +71,43 @@ static int load_arp(struct arp_row *rows, int max){
   c++;
     }
   } fclose(f); return c;
+}
+
+/* Read permanent MAC from sysfs: /sys/class/net/<if>/address */
+static int read_sysfs_mac(const char *ifname, char *out, size_t outlen) {
+  if (!ifname || !out) return 0;
+  char path[256]; snprintf(path, sizeof(path), "/sys/class/net/%s/address", ifname);
+  FILE *f = fopen(path, "r"); if (!f) return 0;
+  char buf[128]; if (!fgets(buf, sizeof(buf), f)) { fclose(f); return 0; }
+  fclose(f);
+  /* trim newline */
+  char *nl = strchr(buf, '\n'); if (nl) *nl = '\0';
+  /* uppercase */
+  for (char *p = buf; *p; ++p) *p = toupper((unsigned char)*p);
+  snprintf(out, outlen, "%s", buf);
+  return 1;
+}
+
+/* Collect IPv4 addresses assigned to interface via getifaddrs */
+static int collect_ifaddrs_ipv4(const char *ifname, char ips[][64], int max) {
+  if (!ifname || !ips) return 0;
+  struct ifaddrs *ifap, *ifa; int count = 0;
+  if (getifaddrs(&ifap) != 0) return 0;
+  for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+    if (!ifa->ifa_addr) continue;
+    if (ifa->ifa_addr->sa_family == AF_INET && strcmp(ifa->ifa_name, ifname) == 0) {
+  char buf[INET_ADDRSTRLEN]; struct sockaddr_in sin_tmp;
+  /* copy into properly aligned local storage to avoid unaligned access on some platforms */
+  memcpy(&sin_tmp, ifa->ifa_addr, sizeof(sin_tmp));
+  if (inet_ntop(AF_INET, &sin_tmp.sin_addr, buf, sizeof(buf))) {
+        /* dedupe */
+        int dup = 0; for (int k=0;k<count;k++) if (strcmp(buf, ips[k])==0) dup = 1;
+        if (!dup && count < max) { snprintf(ips[count], sizeof(ips[0]), "%s", buf); count++; }
+      }
+    }
+  }
+  freeifaddrs(ifap);
+  return count;
 }
 
 int render_connections_plain(char **buf_out, size_t *len_out) __attribute__((visibility("default")));
@@ -199,6 +240,17 @@ int render_connections_json(char **buf_out, size_t *len_out){
               if (!dup2) { snprintf(ips[ip_count], sizeof(ips[0]), "%s", arps[a].ip); ip_count++; }
             }
           }
+          /* Fallbacks when ARP had no entries for this port: read sysfs MAC and getifaddrs IPs */
+          if (mac_count == 0) {
+            char macbuf[64] = "";
+            if (read_sysfs_mac(ports[p], macbuf, sizeof(macbuf))) {
+              snprintf(macs[mac_count], sizeof(macs[0]), "%s", macbuf); mac_count++;
+            }
+          }
+          if (ip_count == 0) {
+            char ipbufs[64][64]; int got = collect_ifaddrs_ipv4(ports[p], ipbufs, 64);
+            for (int ii=0; ii<got && ip_count < 64; ii++) { snprintf(ips[ip_count], sizeof(ips[0]), "%s", ipbufs[ii]); ip_count++; }
+          }
           if (!first_port) JAPPEND(",");
           JAPPEND("{\"port\":\"%s\",\"bridge\":\"%s\",\"macs\":[", ports[p], bridges[i]);
           for (int m=0;m<mac_count;m++){ if (m) JAPPEND(","); JAPPEND("\"%s\"", macs[m]); }
@@ -214,7 +266,17 @@ int render_connections_json(char **buf_out, size_t *len_out){
     /* no bridges: iterate arp rows and expose ports as device entries */
     for (int a = 0; a < na; a++) {
       if (!first_port) JAPPEND(",");
-      JAPPEND("{\"port\":\"%s\",\"bridge\":\"\",\"macs\":[\"%s\"],\"ips\":[\"%s\"],\"notes\":\"\"}", arps[a].dev, arps[a].mac, arps[a].ip);
+      /* If ARP present use it, otherwise try sysfs/getifaddrs fallback */
+      char macs_f[64][64]; char ips_f[64][64]; int mc=0, ic=0;
+      if (arps && arps[a].mac[0]) { snprintf(macs_f[mc++], sizeof(macs_f[0]), "%s", arps[a].mac); }
+      if (arps && arps[a].ip[0]) { snprintf(ips_f[ic++], sizeof(ips_f[0]), "%s", arps[a].ip); }
+      if (mc==0) { char macbuf[64]; if (read_sysfs_mac(arps[a].dev, macbuf, sizeof(macbuf))) { snprintf(macs_f[mc++], sizeof(macs_f[0]), "%s", macbuf); } }
+      if (ic==0) { int got = collect_ifaddrs_ipv4(arps[a].dev, ips_f, 64); ic += got; }
+      JAPPEND("{\"port\":\"%s\",\"bridge\":\"\",\"macs\":[", arps[a].dev);
+      for (int m=0;m<mc;m++){ if (m) JAPPEND(","); JAPPEND("\"%s\"", macs_f[m]); }
+      JAPPEND("],\"ips\":[");
+      for (int m=0;m<ic;m++){ if (m) JAPPEND(","); JAPPEND("\"%s\"", ips_f[m]); }
+      JAPPEND("],\"notes\":\"\"}");
       first_port = 0;
     }
   }
