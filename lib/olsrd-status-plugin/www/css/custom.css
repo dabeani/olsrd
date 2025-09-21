@@ -222,7 +222,7 @@
 .footer-pending.nonzero { background:#f0ad4e; box-shadow: 0 0 6px rgba(240,173,78,0.35); color:#222; }
 
 /* keep legacy footer dots definitions for compatibility (not used by current markup) */
-/* pending tooltip styling hint: ensure tooltip via title attribute shows full pending endpoints */
+/* pending tooltip styling hint: ensure tooltip via title attribute shows full pending diagnostics key/value */
 .footer-pending[title] { cursor: help; }
 
 /* Footer latency text */
