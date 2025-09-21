@@ -5771,6 +5771,18 @@ static int h_diagnostics_json(http_request_t *r) {
   { "arp_cache_ttl_s", NULL, "OLSRD_STATUS_ARP_CACHE_TTL", "params.arp_cache_ttl_s.desc" },
       { "status_lite_ttl_s", &g_cfg_status_lite_ttl_s_set, "OLSRD_STATUS_STATUS_LITE_TTL_S", "params.status_lite_ttl_s.desc" },
       { "status_devices_mode", NULL, "OLSRD_STATUS_STATUS_DEVICES_MODE", "params.status_devices_mode.desc" },
+      /* Additional params for full visibility */
+      { "allow_arp_fallback", NULL, "OLSRD_STATUS_ALLOW_ARP_FALLBACK", "params.allow_arp_fallback.desc" },
+      { "fetch_startup_wait", NULL, "OLSRD_STATUS_FETCH_STARTUP_WAIT", "params.fetch_startup_wait.desc" },
+      { "admin_key", NULL, "OLSRD_STATUS_ADMIN_KEY", "params.admin_key.desc" },
+      { "plugin_net", NULL, "OLSRD_STATUS_PLUGIN_NET", "params.plugin_net.desc" },
+      { "fetch_log_unsilence", NULL, "OLSRD_STATUS_FETCH_LOG_UNSILENCE", "params.fetch_log_unsilence.desc" },
+      { "thread_pool", NULL, "OLSRD_STATUS_THREAD_POOL", "params.thread_pool.desc" },
+      { "thread_pool_size", NULL, "OLSRD_STATUS_THREAD_POOL_SIZE", "params.thread_pool_size.desc" },
+      { "access_log", NULL, "OLSRD_STATUS_ACCESS_LOG", "params.access_log.desc" },
+      { "arp_cache_len", NULL, "OLSRD_STATUS_ARP_CACHE_LEN", "params.arp_cache_len.desc" },
+      { "ubnt_debug", NULL, "OLSRD_STATUS_UBNT_DEBUG", "params.ubnt_debug.desc" },
+      { "debug_nodedb", NULL, "OLSRD_STATUS_DEBUG_NODEDB", "params.debug_nodedb.desc" },
     };
     size_t n = sizeof(pm) / sizeof(pm[0]);
     for (size_t i = 0; i < n; ++i) {
