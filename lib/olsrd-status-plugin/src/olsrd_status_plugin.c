@@ -2951,6 +2951,35 @@ static int h_status(http_request_t *r) {
   /* include suggested UI autos-refresh ms */
   APPEND("\"fetch_auto_refresh_ms\":%d,", g_fetch_auto_refresh_ms);
 
+  /* Additional diagnostics: UBNT tuning, caches, log buffer, fetch tunables, process RSS */
+  {
+    time_t _now = time(NULL);
+    int dev_age = g_devices_cache_ts ? (int)(_now - g_devices_cache_ts) : -1;
+    int arp_age = g_arp_cache_ts ? (int)(_now - g_arp_cache_ts) : -1;
+    /* process RSS (kB) via /proc/self/status on Linux; best-effort */
+    long proc_rss_kb = -1;
+    FILE *pf = fopen("/proc/self/status", "r");
+    if (pf) {
+      char line[256];
+      while (fgets(line, sizeof(line), pf)) {
+        if (strncmp(line, "VmRSS:", 6) == 0) {
+          char *p = line + 6;
+          while (*p && !isdigit((unsigned char)*p)) p++;
+          if (*p) proc_rss_kb = strtol(p, NULL, 10);
+          break;
+        }
+      }
+      fclose(pf);
+    }
+
+    APPEND("\"ubnt\":{\"select_timeout_cap_ms\":%d,\"probe_window_ms\":%d,\"cache_ttl_s\":%d},", g_ubnt_select_timeout_cap_ms, g_ubnt_probe_window_ms, g_ubnt_cache_ttl_s);
+    APPEND("\"devices_cache\":{\"ts\":%ld,\"age_s\":%d,\"len\":%zu},", (long)g_devices_cache_ts, dev_age, g_devices_cache_len);
+    APPEND("\"arp_cache\":{\"ts\":%ld,\"age_s\":%d,\"len\":%zu},", (long)g_arp_cache_ts, arp_age, g_arp_cache_len);
+    APPEND("\"log_buffer\":{\"configured_lines\":%d,\"stored_lines\":%d},", g_log_buf_lines, g_log_count);
+    APPEND("\"fetch_tunables\":{\"queue_max\":%d,\"retries\":%d,\"backoff_initial\":%d},", g_fetch_queue_max, g_fetch_retries, g_fetch_backoff_initial);
+    APPEND("\"process_rss_kb\":%ld,", proc_rss_kb);
+  }
+
 
   detect_olsr_processes(&olsrd_on,&olsr2_on);
   if(olsr2_on) fprintf(stderr,"[status-plugin] detected olsrd2 (robust)\n");
