@@ -659,7 +659,7 @@ static int cached_util_http_get_url_local(const char *url, char **out, size_t *o
    * used by olsrd/olsrd2 txtinfo/json endpoints.
    */
   int rc = -1;
-  const char *local_ports[] = { ":2006", ":9090", ":8123", ":8000", NULL };
+  const char *local_ports[] = { ":2006", ":9090", ":8123", NULL };
   const char *found_port = NULL;
   for (const char **pp = local_ports; *pp; ++pp) {
     if (url && strstr(url, "127.0.0.1") && strstr(url, *pp)) { found_port = *pp; break; }
@@ -684,18 +684,6 @@ static int cached_util_http_get_url_local(const char *url, char **out, size_t *o
           status_collect_hna(&ab);
         } else if (strncmp(path, "/mid", 4) == 0) {
           status_collect_mid(&ab);
-        } else if (strncmp(path, "/telnet/nhdpinfo", 15) == 0) {
-          /* olsrd2 exposes telnet bridge endpoints like:
-           * /telnet/nhdpinfo%20json%20link and /telnet/nhdpinfo%20json%20neighbor
-           * Accept either percent-encoded or plain spaces. Map to collectors.
-           */
-          if (strstr(path, "link") != NULL) {
-            status_collect_links(&ab);
-          } else if (strstr(path, "neighbor") != NULL) {
-            status_collect_neighbors(&ab);
-          } else {
-            /* unknown telnet subpath -> leave empty */
-          }
         } else {
           /* Unknown local path; fall back to TCP fetch */
           abuf_free(&ab);
