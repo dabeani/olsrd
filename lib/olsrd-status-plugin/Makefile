@@ -12,14 +12,22 @@ CC      ?= cc
 RM      ?= rm -f
 MKDIR_P ?= mkdir -p
 
-SRCS := src/olsrd_status_plugin.c src/httpd.c src/util.c src/connections.c src/standalone_links_parser.c src/airos_cache.c src/json_helpers.c rev/discover/ubnt_discover.c
+SRCS := src/olsrd_status_plugin.c src/httpd.c src/util.c src/connections.c src/standalone_links_parser.c src/airos_cache.c src/json_helpers.c src/olsrd_status_collectors.c rev/discover/ubnt_discover.c
 HDRS := src/httpd.h src/util.h src/airos_cache.h rev/discover/ubnt_discover.h
 
 CFLAGS   ?= -O2
 CFLAGS   += -fPIC
 CPPFLAGS += -D_GNU_SOURCE -I$(OLSRD_INC) -I$(OLSRD_SRC) -Isrc -Irev/discover
 WARNFLAGS?= -Wall -Wextra -Wformat=2 -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wmissing-prototypes
-LDFLAGS  += -shared
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+	# On macOS allow undefined symbols to be resolved at load time by the host
+	# executable (olsrd). Use dynamic_lookup so we don't need to link against
+	# the core sources when building the plugin shared object.
+	LDFLAGS  += -Wl,-undefined,dynamic_lookup
+else
+	LDFLAGS  += -shared
+endif
 LDLIBS   += -lpthread
 
 # Do not use libcurl from system libraries; force building without libcurl

@@ -1,5 +1,21 @@
 # olsrd-status-plugin
 
+This plugin provides HTTP status endpoints by reading OLSRd in-memory
+data structures. Important notes for developers and packagers:
+
+- The plugin intentionally depends on core olsrd implementations (for
+  example `autobuf` and other internal helpers). It is not intended to
+  run standalone — it is expected to be loaded by the `olsrd` daemon,
+  which provides the canonical implementations of required symbols at
+  runtime (this follows the same approach as `jsoninfo`/`txtinfo`).
+
+- Do not add local copies of core implementation files (e.g. `autobuf.c`)
+  into this plugin. Doing so can cause duplicate-symbol collisions when
+  the plugin is loaded into the running daemon.
+
+Build: `make -C lib/olsrd-status-plugin`
+# olsrd-status-plugin
+
 Note: this plugin is now included in the top-level build. You can build it via the repository root with `make libs`, or build/install locally from the plugin directory as shown below.
 
 Light‑weight HTTP status / diagnostics plugin for legacy **olsrd (v1)** and **olsr2** daemons. It exposes a small embedded web UI plus JSON APIs that aggregate and normalize link, neighbor, route, topology, device discovery and system information into a single, cache‑friendly interface for monitoring tools or browsers.

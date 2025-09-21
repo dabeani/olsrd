@@ -41,6 +41,7 @@
 #include "olsrd_plugin.h"
 #include "ubnt_discover.h"
 #include "airos_cache.h"
+#include "olsrd_status_collectors.h"
 
 /* Ensure UBNT_DEBUG is defined when compiling this translation unit.
  * rev/discover/ubnt_discover.c defines a compile-time UBNT_DEBUG fallback
@@ -388,40 +389,40 @@ static unsigned long g_metric_unique_nodes = 0;
 #define FETCH_TYPE_NODEDB   0x1
 #define FETCH_TYPE_DISCOVER 0x2
 
-struct fetch_req {
-  int force; /* bypass TTL */
-  int wait;  /* block caller until done */
-  int done;
-  int type;  /* FETCH_TYPE_* */
-  pthread_mutex_t m;
-  pthread_cond_t  cv;
-  struct fetch_req *next;
-};
-static struct fetch_req *g_fetch_q_head = NULL;
-static struct fetch_req *g_fetch_q_tail = NULL;
-static pthread_mutex_t g_fetch_q_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t  g_fetch_q_cv   = PTHREAD_COND_INITIALIZER;
-static int g_fetch_worker_running = 0;
+      struct autobuf ab;
+      if (abuf_init(&ab, 1024) == 0) {
+        if (strncmp(path, "/links", 6) == 0 || strncmp(path, "/lin", 4) == 0) {
+          status_collect_links(&ab);
+        } else if (strncmp(path, "/routes", 7) == 0 || strncmp(path, "/rou", 4) == 0) {
+          status_collect_routes(&ab);
+        } else if (strncmp(path, "/topology", 9) == 0 || strncmp(path, "/top", 4) == 0) {
+          status_collect_topology(&ab);
+        } else if (strncmp(path, "/neighbors", 10) == 0 || strncmp(path, "/nei", 4) == 0) {
+          status_collect_neighbors(&ab);
+        } else if (strncmp(path, "/hna", 4) == 0) {
+          status_collect_hna(&ab);
+        } else if (strncmp(path, "/mid", 4) == 0) {
+          status_collect_mid(&ab);
+        } else {
+          /* Unknown :2006 path; fall back to TCP fetch */
+          abuf_free(&ab);
+          rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
+        }
 
-/* max seconds to wait when a caller requests wait=1 to avoid indefinite block */
-static int g_fetch_wait_timeout = 30;
-
-/* --- endpoint coalescing helper ---
- * Simple per-endpoint serializer that optionally caches the last payload for a short TTL.
- * It allows multiple concurrent HTTP requests for the same endpoint to avoid duplicating
- * expensive work (external commands, broadcasts). Concurrent callers either get a
- * recent cached response or wait for the in-flight worker to finish and then use its result.
- */
-typedef struct {
-  pthread_mutex_t m;
-  pthread_cond_t cv;
-  int busy;
-  char *cached;
-  size_t cached_len;
-  time_t ts;
-  int ttl;
-} endpoint_coalesce_t;
-
+        if (rc == -1) {
+          /* We generated output in 'ab' - copy to tmp and return */
+          tmp = malloc(ab.len + 1);
+          if (tmp) {
+            memcpy(tmp, ab.buf, ab.len);
+            tmp[ab.len] = '\0';
+            tlen = ab.len;
+            rc = 0;
+          } else {
+            rc = -1;
+          }
+        }
+        abuf_free(&ab);
+      }
 static void endpoint_coalesce_init(endpoint_coalesce_t *e, int ttl) {
   if (!e) return;
   pthread_mutex_init(&e->m, NULL);
@@ -678,7 +679,59 @@ static int cached_util_http_get_url_local(const char *url, char **out, size_t *o
   pthread_mutex_unlock(&g_local_cache_lock);
 
   char *tmp = NULL; size_t tlen = 0;
-  int rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
+  /* Intercept local txtinfo-style endpoints on port 2006 and generate the
+   * output in-process using direct collectors to avoid TCP/IPC.
+   */
+  int rc = -1;
+  if (url && strstr(url, "127.0.0.1:2006")) {
+    const char *p = strstr(url, ":2006");
+    const char *path = NULL;
+    if (p) path = strchr(p + 5, '/');
+    if (path) {
+      struct autobuf out;
+      if (abuf_init(&out, 1024) == 0) {
+        if (strncmp(path, "/links", 6) == 0 || strncmp(path, "/lin", 4) == 0) {
+          status_collect_links(&out);
+        } else if (strncmp(path, "/routes", 7) == 0 || strncmp(path, "/rou", 4) == 0) {
+          status_collect_routes(&out);
+        } else if (strncmp(path, "/topology", 9) == 0 || strncmp(path, "/top", 4) == 0) {
+          status_collect_topology(&out);
+        } else if (strncmp(path, "/neighbors", 10) == 0 || strncmp(path, "/nei", 4) == 0) {
+          status_collect_neighbors(&out);
+        } else if (strncmp(path, "/hna", 4) == 0) {
+          status_collect_hna(&out);
+        } else if (strncmp(path, "/mid", 4) == 0) {
+          status_collect_mid(&out);
+        } else {
+          /* Unknown :2006 path; fall back to TCP fetch */
+          abuf_free(&out);
+          rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
+        }
+
+        if (rc == -1) {
+          /* We generated output in 'out' - copy to tmp and return */
+          tmp = malloc(out.len + 1);
+          if (tmp) {
+            memcpy(tmp, out.buf, out.len);
+            tmp[out.len] = '\0';
+            tlen = out.len;
+            rc = 0;
+          } else {
+            rc = -1;
+          }
+          abuf_free(&out);
+        }
+      } else {
+        /* allocation failed - fall back */
+        rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
+      }
+    } else {
+      /* no path after :2006 - fall back */
+      rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
+    }
+  } else {
+    rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
+  }
   if (rc != 0 || !tmp) { if (tmp) { free(tmp); } return rc; }
 
   pthread_mutex_lock(&g_local_cache_lock);
