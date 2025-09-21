@@ -254,7 +254,20 @@ static void diag_log_event(const char *type, const char *endpoint, const char *c
   diag_logs[idx].client_ip[sizeof(diag_logs[idx].client_ip)-1] = '\0';
   diag_logs[idx].status = status;
   if (fmt) {
-    va_list ap; va_start(ap, fmt); vsnprintf(diag_logs[idx].msg, sizeof(diag_logs[idx].msg), fmt, ap); va_end(ap);
+    va_list ap;
+    va_start(ap, fmt);
+    /* Some toolchains warn about non-literal format strings here; this is intentional
+     * because 'fmt' comes from internal code only. Suppress the warning for GCC/Clang
+     * around this single call. */
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+#endif
+    vsnprintf(diag_logs[idx].msg, sizeof(diag_logs[idx].msg), fmt, ap);
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+    va_end(ap);
     diag_logs[idx].msg[sizeof(diag_logs[idx].msg)-1] = '\0';
   } else {
     diag_logs[idx].msg[0] = '\0';
@@ -281,11 +294,24 @@ static int h_diagnostics_logs(http_request_t *r) {
     if (cap - len < need) {
       size_t newcap = cap * 2 + need;
       char *nb = realloc(buf, newcap);
-      if (!nb) break; buf = nb; cap = newcap;
+      if (!nb) {
+        break;
+      }
+      buf = nb;
+      cap = newcap;
     }
-    if (i) { ret = snprintf(buf + len, cap - len, ","); if (ret < 0) break; len += (size_t)ret; }
+    if (i) {
+      ret = snprintf(buf + len, cap - len, ",");
+      if (ret < 0) {
+        break;
+      }
+      len += (size_t)ret;
+    }
     ret = snprintf(buf + len, cap - len, "{\"ts\":%ld,\"type\":\"%s\",\"endpoint\":\"%s\",\"client_ip\":\"%s\",\"status\":%d,\"msg\":\"%s\"}", (long)e->ts, e->type, e->endpoint, e->client_ip, e->status, e->msg[0]?e->msg:"");
-    if (ret < 0) break; len += (size_t)ret;
+    if (ret < 0) {
+      break;
+    }
+    len += (size_t)ret;
   }
   if (cap - len < 4) { char *nb = realloc(buf, cap + 64); if (nb) { buf = nb; cap += 64; } }
   snprintf(buf + len, cap - len, "]\n");
