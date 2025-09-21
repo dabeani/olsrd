@@ -1,3 +1,15 @@
+This are the rules for this session to remember:
+be accurate - dont write long conclusions/what was done;
+always check if the code is working before answering;
+Be concise; run needed commands in terminal locally; 
+read files fully; 
+fix scripts and compiler warnings (do not change Makefile without my ok); 
+avoid CDNs; 
+commit and push changed (same branch!)
+Update README.md if needed;
+at no time i want a conclusion/progress update/verification steps!
+Now wait for my commands;
+
 ## Quick orientation for AI coding agents
 
 This repo is the OLSRd routing daemon and its plugins. Focus: C code, a top-level daemon in `src/`, and many plugins in `lib/` (each plugin in `lib/<name>/`). The `lib/olsrd-status-plugin` is a representative, relatively large plugin with HTTP endpoints, JSON normalization and many repo conventions.
