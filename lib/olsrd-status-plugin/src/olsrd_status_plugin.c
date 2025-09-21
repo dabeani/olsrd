@@ -3328,12 +3328,13 @@ links_done_plain_fallback:
     APPEND("\"olsrd_endpoints\":[");
     int first_ep = 1;
     for (const char **ep = eps; *ep; ++ep) {
-      char *tout = NULL; size_t tlen = 0; int ok = 0;
-      if (strstr(*ep, "127.0.0.1") || strstr(*ep, "localhost")) {
-        if (util_http_get_url_local(*ep, &tout, &tlen, 1) == 0 && tout && tlen>0) ok = 1;
-      } else {
-        char cmd[256]; snprintf(cmd, sizeof(cmd), "/usr/bin/curl -s --max-time 1 %s", *ep);
-        if (util_exec(cmd, &tout, &tlen) == 0 && tout && tlen>0) ok = 1;
+      /* Avoid performing HTTP probes here — report support for internalized ports
+       * based on the known internal ports list. This keeps diagnostics light and
+       * deterministic (no network calls).
+       */
+      int ok = 0; size_t tlen = 0;
+      if (strstr(*ep, ":9090") || strstr(*ep, ":2006") || strstr(*ep, ":8123")) {
+        ok = 1; /* internalized and served by in-memory collectors */
       }
       if (!first_ep) {
         APPEND(",");
@@ -3341,11 +3342,8 @@ links_done_plain_fallback:
       first_ep = 0;
       APPEND("{\"url\":"); json_append_escaped(&buf,&len,&cap,*ep);
       APPEND(",\"ok\":%s,\"len\":%zu,\"sample\":", ok?"true":"false", tlen);
-      if (tout && tlen>0) {
-        /* include a short sample */
-        char sample[256]; size_t copy = tlen < sizeof(sample)-1 ? tlen : sizeof(sample)-1; memcpy(sample, tout, copy); sample[copy]=0; json_append_escaped(&buf,&len,&cap,sample);
-      } else json_append_escaped(&buf,&len,&cap,"");
-      APPEND("}"); if (tout) free(tout);
+      json_append_escaped(&buf,&len,&cap,"");
+      APPEND("}");
     }
     APPEND("]");
     APPEND(",\"traceroute\":{\"available\":%s,\"path\":", g_has_traceroute?"true":"false"); json_append_escaped(&buf,&len,&cap, g_traceroute_path);
