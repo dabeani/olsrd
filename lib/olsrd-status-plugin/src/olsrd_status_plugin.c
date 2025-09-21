@@ -43,7 +43,16 @@
 #include "airos_cache.h"
 #include "olsrd_status_collectors.h"
 #include <time.h>
-#include <sys/queue.h>
+#if defined(__has_include)
+  #if __has_include(<sys/queue.h>)
+    #include <sys/queue.h>
+  #else
+    #include "sys_queue_compat.h"
+  #endif
+#else
+  /* conservative fallback: attempt system header, on some toolchains this may fail */
+  #include <sys/queue.h>
+#endif
 #include <string.h>
 
 /* --- simple epoch-based per-client-per-endpoint rate limiter ---
@@ -5699,6 +5708,73 @@ static int h_diagnostics_json(http_request_t *r) {
   if (json_appendf(&out, &outlen, &outcap, "\"coalesce\":{\"devices_ttl\":%d,\"discover_ttl\":%d,\"traceroute_ttl\":%d,\"links_ttl\":%d},", g_coalesce_devices_ttl, g_coalesce_discover_ttl, g_coalesce_traceroute_ttl, g_coalesce_links_ttl) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
 
     if (json_appendf(&out, &outlen, &outcap, "\"debug\":{\"log_request_debug\":%d,\"last_fetch_msg\":\"%s\"}", g_log_request_debug, g_debug_last_fetch_msg) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  /* params_meta: programmatically emit entries for known plugin parameters.
+   * Each entry includes: label, plparam (exact name), env (env var), desc_key (i18n key), effective (plparam|env|default)
+   */
+  if (json_appendf(&out, &outlen, &outcap, ",\"params_meta\":{") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  {
+    struct param_map { const char *pl; const int *cfg_flag; const char *env; const char *desc_key; };
+    static const struct param_map pm[] = {
+      { "bind", &g_cfg_bind_set, "OLSRD_STATUS_PLUGIN_BIND", "params.bind.desc" },
+      { "port", &g_cfg_port_set, "OLSRD_STATUS_PLUGIN_PORT", "params.port.desc" },
+      { "enableipv6", &g_cfg_enableipv6_set, "OLSRD_STATUS_PLUGIN_ENABLEIPV6", "params.enableipv6.desc" },
+      { "assetroot", &g_cfg_assetroot_set, "OLSRD_STATUS_PLUGIN_ASSETROOT", "params.assetroot.desc" },
+      { "nodedb_url", &g_cfg_nodedb_url_set, "OLSRD_STATUS_PLUGIN_NODEDB_URL", "params.nodedb_url.desc" },
+      { "nodedb_ttl", &g_cfg_nodedb_ttl_set, "OLSRD_STATUS_PLUGIN_NODEDB_TTL", "params.nodedb_ttl.desc" },
+      { "nodedb_write_disk", &g_cfg_nodedb_write_disk_set, "OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK", "params.nodedb_write_disk.desc" },
+      { "fetch_queue_max", &g_cfg_fetch_queue_set, "OLSRD_STATUS_FETCH_QUEUE_MAX", "params.fetch_queue_max.desc" },
+      { "fetch_retries", &g_cfg_fetch_retries_set, "OLSRD_STATUS_FETCH_RETRIES", "params.fetch_retries.desc" },
+      { "fetch_backoff_initial", &g_cfg_fetch_backoff_set, "OLSRD_STATUS_FETCH_BACKOFF_INITIAL", "params.fetch_backoff_initial.desc" },
+      { "fetch_report_interval", &g_cfg_fetch_report_set, "OLSRD_STATUS_FETCH_REPORT_INTERVAL", "params.fetch_report_interval.desc" },
+      { "fetch_auto_refresh_ms", &g_cfg_fetch_auto_refresh_set, "OLSRD_STATUS_FETCH_AUTO_REFRESH_MS", "params.fetch_auto_refresh_ms.desc" },
+      { "fetch_log_queue", &g_cfg_fetch_log_queue_set, "OLSRD_STATUS_FETCH_LOG_QUEUE", "params.fetch_log_queue.desc" },
+      { "fetch_log_force", &g_cfg_fetch_log_force_set, "OLSRD_STATUS_FETCH_LOG_FORCE", "params.fetch_log_force.desc" },
+      { "log_request_debug", &g_cfg_log_request_debug_set, "OLSRD_STATUS_LOG_REQUEST_DEBUG", "params.log_request_debug.desc" },
+      { "log_buf_lines", &g_cfg_log_buf_lines_set, "OLSRD_STATUS_LOG_BUF_LINES", "params.log_buf_lines.desc" },
+      { "coalesce_devices_ttl", &g_cfg_coalesce_devices_ttl_set, "OLSRD_STATUS_COALESCE_DEVICES_TTL", "params.coalesce_devices_ttl.desc" },
+      { "coalesce_discover_ttl", &g_cfg_coalesce_discover_ttl_set, "OLSRD_STATUS_COALESCE_DISCOVER_TTL", "params.coalesce_discover_ttl.desc" },
+      { "coalesce_traceroute_ttl", &g_cfg_coalesce_traceroute_ttl_set, "OLSRD_STATUS_COALESCE_TRACEROUTE_TTL", "params.coalesce_traceroute_ttl.desc" },
+      { "coalesce_links_ttl", &g_cfg_coalesce_links_ttl_set, "OLSRD_STATUS_COALESCE_LINKS_TTL", "params.coalesce_links_ttl.desc" },
+      { "fetch_queue_warn", &g_cfg_fetch_queue_warn_set, "OLSRD_STATUS_FETCH_QUEUE_WARN", "params.fetch_queue_warn.desc" },
+      { "fetch_queue_crit", &g_cfg_fetch_queue_crit_set, "OLSRD_STATUS_FETCH_QUEUE_CRIT", "params.fetch_queue_crit.desc" },
+      { "fetch_dropped_warn", &g_cfg_fetch_dropped_warn_set, "OLSRD_STATUS_FETCH_DROPPED_WARN", "params.fetch_dropped_warn.desc" },
+      { "discover_interval", &g_cfg_devices_discover_interval_set, "OLSRD_STATUS_UBNT_DISCOVER_INTERVAL", "params.discover_interval.desc" },
+      { "ubnt_probe_window_ms", &g_cfg_ubnt_probe_window_ms_set, "OLSRD_STATUS_UBNT_PROBE_WINDOW_MS", "params.ubnt_probe_window_ms.desc" },
+      { "ubnt_select_timeout_cap_ms", &g_cfg_ubnt_select_timeout_cap_ms_set, "OLSRD_STATUS_UBNT_SELECT_TIMEOUT_CAP_MS", "params.ubnt_select_timeout_cap_ms.desc" },
+      { "ubnt_cache_ttl_s", &g_cfg_ubnt_cache_ttl_s_set, "OLSRD_STATUS_UBNT_CACHE_TTL_S", "params.ubnt_cache_ttl_s.desc" },
+  { "arp_cache_ttl_s", NULL, "OLSRD_STATUS_ARP_CACHE_TTL", "params.arp_cache_ttl_s.desc" },
+      { "status_lite_ttl_s", &g_cfg_status_lite_ttl_s_set, "OLSRD_STATUS_STATUS_LITE_TTL_S", "params.status_lite_ttl_s.desc" },
+      { "status_devices_mode", NULL, "OLSRD_STATUS_STATUS_DEVICES_MODE", "params.status_devices_mode.desc" },
+    };
+    size_t n = sizeof(pm) / sizeof(pm[0]);
+    for (size_t i = 0; i < n; ++i) {
+      const char *pl = pm[i].pl; const char *env = pm[i].env ? pm[i].env : ""; const char *desc = pm[i].desc_key ? pm[i].desc_key : "";
+      const char *effective = "default";
+      if (pm[i].cfg_flag && *(pm[i].cfg_flag)) effective = "plparam";
+      else if (env && env[0] && getenv(env)) effective = "env";
+      /* label: simple humanization of plparam */
+      char label[128]; size_t li = 0; int cap_first = 1;
+      for (const char *p = pl; *p && li + 1 < sizeof(label); ++p) {
+        char c = *p;
+        if (c == '_' || c == '-') { if (li + 1 < sizeof(label)) label[li++] = ' '; cap_first = 1; continue; }
+        if (cap_first) { if (li + 1 < sizeof(label)) label[li++] = (char)toupper((unsigned char)c); cap_first = 0; }
+        else { if (li + 1 < sizeof(label)) label[li++] = c; }
+      }
+      label[li] = '\0';
+      if (i) { if (json_appendf(&out, &outlen, &outcap, ",") != 0) { /* best-effort */ } }
+      if (json_appendf(&out, &outlen, &outcap, "\"%s\":{\"label\":\"%s\",\"plparam\":\"%s\",\"env\":\"%s\",\"desc_key\":\"%s\",\"effective\":\"%s\"}", pl, label, pl, env, desc, effective) != 0) { /* best-effort */ }
+    }
+    if (json_appendf(&out, &outlen, &outcap, "}") != 0) { /* best-effort */ }
+  }
+  /* arp */
+  if (json_appendf(&out, &outlen, &outcap, ",\"arp\":{\"arp_cache_len\":{\"label\":\"ARP cache length\",\"env\":\"OLSRD_STATUS_ARP_CACHE_LEN\",\"desc\":\"Max entries in the ARP fallback cache\"},\"arp_cache_ttl_s\":{\"label\":\"ARP cache TTL (s)\",\"env\":\"OLSRD_STATUS_ARP_CACHE_TTL\",\"desc\":\"TTL for ARP cache entries in seconds\"}}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  /* coalesce */
+  if (json_appendf(&out, &outlen, &outcap, ",\"coalesce\":{\"devices_ttl\":{\"label\":\"Coalesce devices TTL\",\"env\":\"OLSRD_STATUS_COALESCE_DEVICES_TTL\",\"desc\":\"Time to keep coalesced device entries (s)\"},\"discover_ttl\":{\"label\":\"Coalesce discover TTL\",\"env\":\"OLSRD_STATUS_COALESCE_DISCOVER_TTL\",\"desc\":\"Coalescing TTL for discover results (s)\"}}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  /* debug */
+  if (json_appendf(&out, &outlen, &outcap, ",\"debug\":{\"log_request_debug\":{\"label\":\"Request debug\",\"env\":\"OLSRD_STATUS_UBNT_DEBUG\",\"desc\":\"Enable verbose request/response debugging\"}}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  /* nodedb */
+  if (json_appendf(&out, &outlen, &outcap, ",\"nodedb\":{\"nodedb_ttl\":{\"label\":\"NodeDB TTL\",\"env\":\"OLSRD_STATUS_PLUGIN_NODEDB_TTL\",\"desc\":\"TTL for cached NodeDB entries (s)\"},\"nodedb_write_disk\":{\"label\":\"NodeDB write disk\",\"env\":\"OLSRD_STATUS_PLUGIN_NODEDB_WRITE_DISK\",\"desc\":\"Whether to persist NodeDB to disk\"}}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  if (json_appendf(&out, &outlen, &outcap, "}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
     /* rate limiter stats: total table size and per-endpoint counts */
     if (json_appendf(&out, &outlen, &outcap, ",\"rate_limiter\":{\"rate_limited_count\":%lu,\"rl_size\":%zu,\"endpoints\":{",
                         (unsigned long)g_rl_rate_limited_count, rl_size) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }

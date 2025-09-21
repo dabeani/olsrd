@@ -486,6 +486,31 @@ The local tree includes a few recent, small developer-focused improvements you m
 
 - Combined diagnostics endpoint: `/diagnostics.json` now aggregates the small set of diagnostic endpoints into one JSON blob with top-level keys: `versions`, `capabilities`, `fetch_debug`, and `summary`. This reduces client-side parallel requests and simplifies the diagnostics drawer logic in the SPA.
 
+Additional fields: `params_meta`
+-------------------------------
+The `/diagnostics.json` endpoint now includes an optional `params_meta` object. This contains machine-readable metadata for groups of runtime parameters exposed under the `globals`, `fetch_opts`, `ubnt`, `arp`, `coalesce`, `debug`, and `nodedb` keys. Each entry maps parameter keys to a small object with these fields:
+
+- `label`: a human-friendly short name for the parameter shown in the UI
+- `env`: the environment variable (or PlParam) name that can be used to set/override the parameter
+- `desc`: a short description shown beneath the parameter to explain its purpose
+
+The web UI uses `params_meta` when present to render friendlier names and short descriptions on the Parameters page. If `params_meta` is not present or a particular parameter lacks metadata, the UI falls back to the raw key names and values.
+
+Example (partial) payload:
+
+```
+{
+    "globals": { ... },
+    "fetch_opts": { ... },
+    "params_meta": {
+        "globals": {
+            "bind": { "label": "Bind address", "env": "OLSRD_STATUS_PLUGIN_BIND", "desc": "HTTP server bind address" },
+            "port": { "label": "Port", "env": "OLSRD_STATUS_PLUGIN_PORT", "desc": "HTTP server listening port" }
+        }
+    }
+}
+```
+
 - Frontend wiring: the Web UI (`www/js/app.js`) now prefers `/diagnostics.json` for the diagnostics drawer and falls back to the original endpoints (`/versions.json`, `/capabilities`, `/fetch_debug`, `/status/summary`) when the combined endpoint is unavailable.
 
 - Smoke test: a tiny Node smoke-test script has been added at `www/test/diagnostics-smoke.js`. It launches a small local server serving a sample `/diagnostics.json` payload and validates the expected top-level keys. Run it with:
