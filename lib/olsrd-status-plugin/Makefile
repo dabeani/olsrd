@@ -17,7 +17,7 @@ HDRS := src/httpd.h src/util.h src/airos_cache.h rev/discover/ubnt_discover.h
 
 CFLAGS   ?= -O2
 CFLAGS   += -fPIC
-CPPFLAGS += -D_GNU_SOURCE -I$(OLSRD_INC) -I$(OLSRD_TOP)/lib -I$(OLSRD_SRC) -Isrc -Irev/discover
+CPPFLAGS += -D_GNU_SOURCE -I$(OLSRD_INC) -I$(OLSRD_TOP)/lib -I$(OLSRD_TOP)/lib/pud/nmealib/include -I$(OLSRD_SRC) -Isrc -Irev/discover
 WARNFLAGS?= -Wall -Wextra -Wformat=2 -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wmissing-prototypes
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
