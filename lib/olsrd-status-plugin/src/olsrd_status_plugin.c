@@ -1449,7 +1449,7 @@ static int h_status_py(http_request_t *r);
 static int h_olsr_links(http_request_t *r); static int h_olsr_routes(http_request_t *r); static int h_olsr_raw(http_request_t *r);
 static int h_olsr_links_debug(http_request_t *r);
 static int h_olsrd_json(http_request_t *r); static int h_capabilities_local(http_request_t *r);
-static int h_txtinfo(http_request_t *r); static int h_jsoninfo(http_request_t *r); static int h_olsrd(http_request_t *r);
+static int h_olsrd(http_request_t *r);
 static int h_discover(http_request_t *r); static int h_discover_ubnt(http_request_t *r); static int h_embedded_appjs(http_request_t *r); static int h_emb_jquery(http_request_t *r); static int h_emb_bootstrap(http_request_t *r);
 static int h_connections(http_request_t *r); static int h_connections_json(http_request_t *r);
 static int h_airos(http_request_t *r); static int h_traffic(http_request_t *r); static int h_versions_json(http_request_t *r); static int h_nodedb(http_request_t *r);
@@ -1867,6 +1867,58 @@ static int neighbor_twohop_for_ip(const char *section, const char *ip) {
   /* Fallback: if no object entries matched, try legacy array-of-strings under "routes" key */
   /* no legacy array-of-strings fallback here */
   return best;
+}
+
+/* Heuristic fallback: scan a raw combined document for IPv4 addresses and
+ * count unique addresses as an approximate node count. This is tolerant and
+ * intentionally simple — used only when other parsing fails so the UI can
+ * show non-zero lightweight counts for troubleshooting. */
+static void heuristic_count_ips_in_raw(const char *raw, unsigned long *out_nodes, unsigned long *out_routes) {
+  if (!raw || !out_nodes || !out_routes) return;
+  const int MAX_UNIQ = 8192;
+  char **uniq = calloc(MAX_UNIQ, sizeof(char*));
+  if (!uniq) return;
+  int ucnt = 0;
+  const char *p = raw;
+  while (*p) {
+    /* find potential start of IPv4 (digit) */
+    if ((*p >= '0' && *p <= '9')) {
+      const char *q = p;
+      int dots = 0; int digits = 0;
+      while (*q && ( (*q >= '0' && *q <= '9') || *q == '.' )) {
+        if (*q == '.') dots++; else digits++;
+        q++;
+      }
+      /* minimal IPv4 heuristic: at least 3 dots and some digits, length reasonable */
+      if (dots == 3 && digits >= 4 && (q - p) < 32) {
+        size_t L = (size_t)(q - p);
+        /* copy candidate and verify numeric byte ranges 0-255 */
+        char tmp[64]; if (L >= sizeof(tmp)) { p = q; continue; }
+        memcpy(tmp, p, L); tmp[L] = '\0';
+        int ok = 1; int a,b,c,d; if (sscanf(tmp, "%d.%d.%d.%d", &a, &b, &c, &d) != 4) ok = 0;
+        if (ok) {
+          if (a<0||a>255||b<0||b>255||c<0||c>255||d<0||d>255) ok = 0;
+        }
+        if (ok) {
+          /* store unique */
+          int dup = 0; for (int i=0;i<ucnt;i++) if (strcmp(uniq[i], tmp) == 0) { dup = 1; break; }
+          if (!dup && ucnt < MAX_UNIQ) {
+            uniq[ucnt] = strdup(tmp);
+            if (uniq[ucnt]) ucnt++;
+          }
+        }
+        p = q;
+        continue;
+      }
+      p = q;
+      continue;
+    }
+    p++;
+  }
+  /* approximate: routes ~= nodes (best-effort) */
+  *out_nodes = (unsigned long)ucnt;
+  *out_routes = (unsigned long)ucnt;
+  for (int i=0;i<ucnt;i++) free(uniq[i]); free(uniq);
 }
 
 /* Minimal ARP enrichment: look up MAC and reverse DNS for IPv4 */
@@ -3424,8 +3476,6 @@ static int h_status(http_request_t *r) {
     }
   }
 
-  /* (legacy duplicate fetch block removed after refactor) */
-
   char *olsr_neighbors_raw=NULL; size_t olnn=0;
   /* Prefer in-memory neighbors collector; if not present and a non-local endpoint was chosen
    * attempt to fetch from the selected external base. Only fall back to telnet bridge (8000)
@@ -4211,6 +4261,16 @@ static int h_status_lite(http_request_t *r) {
               /* Persist computed lightweight counts so other handlers (and metrics) see them */
               METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
             }
+              else {
+                /* If normalization returned no counts, attempt a lightweight heuristic
+                 * to extract IPv4 addresses from the combined probe as a last resort. */
+                unsigned long h_nodes = 0, h_routes = 0;
+                heuristic_count_ips_in_raw(combined, &h_nodes, &h_routes);
+                if (h_nodes > 0 || h_routes > 0) {
+                  olsr_routes = h_routes; olsr_nodes = h_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
+                  if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: heuristic counts applied nodes=%lu routes=%lu\n", h_nodes, h_routes);
+                }
+              }
           }
           if (norm) free(norm);
           free(combined);
@@ -5281,9 +5341,7 @@ static int h_status_py(http_request_t *r) {
     if (get_query_param(r, "airos", t, sizeof(t))) return h_airos(r);
     if (get_query_param(r, "ipv6", t, sizeof(t))) return h_ipv6(r);
     if (get_query_param(r, "ipv4", t, sizeof(t))) return h_ipv4(r);
-    if (get_query_param(r, "olsrd", t, sizeof(t))) return h_olsrd(r);
-    if (get_query_param(r, "jsoninfo", t, sizeof(t))) return h_jsoninfo(r);
-    if (get_query_param(r, "txtinfo", t, sizeof(t))) return h_txtinfo(r);
+  if (get_query_param(r, "olsrd", t, sizeof(t))) return h_olsrd(r);
     if (get_query_param(r, "traffic", t, sizeof(t))) return h_traffic(r);
     if (get_query_param(r, "test", t, sizeof(t))) {
       http_send_status(r,200,"OK"); http_printf(r,"Content-Type: text/plain; charset=utf-8\r\n\r\n"); http_printf(r,"test\n"); return 0;
@@ -5300,8 +5358,6 @@ static int h_status_py(http_request_t *r) {
   if (strcmp(v, "ipv6") == 0) return h_ipv6(r);
   if (strcmp(v, "ipv4") == 0) return h_ipv4(r);
   if (strcmp(v, "olsrd") == 0) return h_olsrd(r);
-  if (strcmp(v, "jsoninfo") == 0) return h_jsoninfo(r);
-  if (strcmp(v, "txtinfo") == 0) return h_txtinfo(r);
   if (strcmp(v, "traffic") == 0) return h_traffic(r);
   if (strcmp(v, "test") == 0) {
     /* no equivalent h_test handler in plugin; emulate small test output */
@@ -5598,7 +5654,7 @@ static int h_capabilities_local(http_request_t *r) {
       free(s);
     }
   }
-  char buf[320]; snprintf(buf, sizeof(buf), "{\"is_edgerouter\":%s,\"is_linux_container\":%s,\"discover\":%s,\"airos\":%s,\"connections\":true,\"traffic\":%s,\"txtinfo\":true,\"jsoninfo\":true,\"traceroute\":%s,\"show_admin_link\":%s}",
+  char buf[320]; snprintf(buf, sizeof(buf), "{\"is_edgerouter\":%s,\"is_linux_container\":%s,\"discover\":%s,\"airos\":%s,\"connections\":true,\"traffic\":%s,\"traceroute\":%s,\"show_admin_link\":%s}",
     g_is_edgerouter?"true":"false", g_is_linux_container?"true":"false", discover?"true":"false", airos?"true":"false", path_exists("/tmp")?"true":"false", tracer?"true":"false", show_admin?"true":"false");
   send_json(r, buf);
   return 0;
@@ -5653,7 +5709,7 @@ static int h_diagnostics_json(http_request_t *r) {
       }
       free(s);
     }
-    snprintf(capbuf, sizeof(capbuf), "{\"is_edgerouter\":%s,\"is_linux_container\":%s,\"discover\":%s,\"airos\":%s,\"connections\":true,\"traffic\":%s,\"txtinfo\":true,\"jsoninfo\":true,\"traceroute\":%s,\"show_admin_link\":%s}",
+    snprintf(capbuf, sizeof(capbuf), "{\"is_edgerouter\":%s,\"is_linux_container\":%s,\"discover\":%s,\"airos\":%s,\"connections\":true,\"traffic\":%s,\"traceroute\":%s,\"show_admin_link\":%s}",
       g_is_edgerouter?"true":"false", g_is_linux_container?"true":"false", discover?"true":"false", airos?"true":"false", path_exists("/tmp")?"true":"false", tracer?"true":"false", show_admin?"true":"false");
   }
 
@@ -6787,8 +6843,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/capabilities", &h_capabilities_local);
   http_server_register_handler("/nodedb/refresh", &h_nodedb_refresh);
   http_server_register_handler("/metrics", &h_prometheus_metrics);
-  http_server_register_handler("/txtinfo",  &h_txtinfo);
-  http_server_register_handler("/jsoninfo", &h_jsoninfo);
+  /* legacy txtinfo/jsoninfo endpoints removed - in-memory collectors provide normalized data via modern endpoints */
   http_server_register_handler("/olsrd",    &h_olsrd);
   http_server_register_handler("/olsr2",    &h_olsrd);
   http_server_register_handler("/discover", &h_discover);
@@ -7040,19 +7095,7 @@ static int h_ipv6(http_request_t *r) {
   return 0;
 }
 
-static int h_txtinfo(http_request_t *r) {
-  char q[64]="ver";
-  (void)get_query_param(r, "q", q, sizeof(q));
-  char url[256];
-  snprintf(url, sizeof(url), "http://127.0.0.1:2006/%s", q);
-  char *out=NULL; size_t n=0;
-  if (util_http_get_url_local(url, &out, &n, 1)==0 && out) {
-    http_send_status(r, 200, "OK");
-    http_printf(r, "Content-Type: text/plain; charset=utf-8\r\n\r\n");
-    http_write(r, out, n); free(out);
-  } else send_text(r, "error\n");
-  return 0;
-}
+/* legacy txtinfo handler removed - data is provided via in-memory collectors and modern endpoints */
 
 /* /status/debug - small diagnostic JSON with cache TTL and timestamps */
 static int h_status_debug(http_request_t *r) {
@@ -7079,23 +7122,7 @@ static int h_status_debug(http_request_t *r) {
   http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, buf, (size_t)n);
   return 0;
 }
-static int h_jsoninfo(http_request_t *r) {
-  if (rl_check_and_update(r, "/jsoninfo") != 0) {
-    http_send_status(r, 429, "Too Many Requests");
-    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
-    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
-    http_write(r, b, strlen(b));
-    return 0;
-  }
-  char q[64]="version";
-  (void)get_query_param(r, "q", q, sizeof(q));
-  char url[256]; snprintf(url, sizeof(url), "http://127.0.0.1:9090/%s", q);
-  char *out=NULL; size_t n=0;
-  if (util_http_get_url_local(url, &out, &n, 1)==0 && out) {
-    send_json(r, (n?out:"{}")); free(out);
-  } else send_json(r, "{\"error\":\"curl failed\"}");
-  return 0;
-}
+/* legacy jsoninfo handler removed - data is provided via in-memory collectors and modern endpoints */
 
 static int h_olsrd(http_request_t *r) {
   char outbuf[2048]; size_t off = 0;
