@@ -109,7 +109,7 @@ int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen) 
           /* skip header line */
           const char *h = strchr(rt, '\n'); if (h) rt = h + 1; else rt = rt + strlen(rt);
           while (rt && *rt && strncmp(rt, "Table:", 6) != 0) {
-            const char *lnend = strchr(rt, '\n'); if (!lnend) lnend = rt + strlen(rt);
+            const char *lnend_rt = strchr(rt, '\n'); if (!lnend_rt) lnend_rt = rt + strlen(rt);
             size_t lsz2 = (size_t)(lnend - rt);
             if (lsz2 > 0) {
               char *line2 = malloc(lsz2 + 1);
@@ -125,7 +125,7 @@ int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen) 
                 free(line2);
               }
             }
-            if (*lnend == '\0') break; rt = lnend + 1;
+            if (*lnend_rt == '\0') { break; } else { rt = lnend_rt + 1; }
           }
         }
         /* nodes: look for lastHopIP / lastHop JSON fragments or topology table lines
@@ -142,7 +142,7 @@ int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen) 
           /* simple set of unique destinations per remote (cap small) */
           char *uniq[512]; int ucnt = 0;
           while (tt && *tt && strncmp(tt, "Table:", 6) != 0) {
-            const char *lnend = strchr(tt, '\n'); if (!lnend) lnend = tt + strlen(tt);
+            const char *lnend_tt = strchr(tt, '\n'); if (!lnend_tt) lnend_tt = tt + strlen(tt);
             size_t lsz2 = (size_t)(lnend - tt);
             if (lsz2 > 0) {
               char *line2 = malloc(lsz2 + 1);
@@ -163,7 +163,7 @@ int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen) 
                 free(line2);
               }
             }
-            if (*lnend == '\0') break; tt = lnend + 1;
+            if (*lnend_tt == '\0') { break; } else { tt = lnend_tt + 1; }
           }
           nodes_count += ucnt;
           for (int i=0;i<ucnt;i++) if (uniq[i]) free(uniq[i]);
