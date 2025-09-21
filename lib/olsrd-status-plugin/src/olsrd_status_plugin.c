@@ -42,6 +42,236 @@
 #include "ubnt_discover.h"
 #include "airos_cache.h"
 #include "olsrd_status_collectors.h"
+#include <time.h>
+#include <sys/queue.h>
+#include <string.h>
+
+/* --- simple epoch-based per-client-per-endpoint rate limiter ---
+ * Keyed by "<endpoint>|<ip>" -> last_ts (seconds) and epoch, protected by mutex.
+ * Admin key may be provided via env OLSRD_STATUS_ADMIN_KEY or PlParam 'admin_key'.
+ */
+#include <pthread.h>
+#include <stdint.h>
+
+/* Dynamic chained hashmap for rate-limit entries. Keys are heap-allocated strings "endpoint|ip".
+ * The map resizes when load factor grows. Buckets contain singly-linked lists of entries.
+ */
+
+struct rl_entry {
+  char *key; /* heap-allocated: endpoint|ip */
+  uint32_t epoch;
+  time_t last_ts;
+  struct rl_entry *next; /* for chaining */
+};
+
+static struct rl_entry **rl_buckets = NULL; /* array of bucket heads */
+static size_t rl_buckets_len = 0; /* number of buckets */
+static pthread_mutex_t rl_lock = PTHREAD_MUTEX_INITIALIZER;
+static size_t rl_size = 0; /* number of entries stored */
+static uint32_t rl_global_epoch = 0;
+static char *g_admin_key = NULL; /* optional admin key from env or PlParam */
+/* stats */
+static unsigned long g_rl_rate_limited_count = 0;
+
+/* forward declarations for helpers defined later in this file */
+static void send_json(http_request_t *r, const char *json);
+static int get_query_param(http_request_t *r, const char *key, char *out, size_t outlen);
+
+/* simple FNV-1a 64-bit hash for keys */
+static uint64_t rl_hash(const char *s) {
+  uint64_t h = UINT64_C(1469598103934665603);
+  for (const unsigned char *p = (const unsigned char*)s; *p; ++p) h = (h ^ *p) * UINT64_C(1099511628211);
+  return h;
+}
+/* ensure map initialized with given bucket count (power of two) */
+static int rl_ensure_initialized(size_t min_buckets) {
+  if (rl_buckets && rl_buckets_len >= min_buckets) return 0;
+  size_t n = 16;
+  while (n < min_buckets) n <<= 1;
+  struct rl_entry **nb = calloc(n, sizeof(struct rl_entry*));
+  if (!nb) return -1;
+  /* migrate existing entries if any */
+  if (rl_buckets) {
+    for (size_t i = 0; i < rl_buckets_len; ++i) {
+      struct rl_entry *it = rl_buckets[i];
+      while (it) {
+        struct rl_entry *next = it->next;
+        uint64_t h = rl_hash(it->key);
+        size_t idx = (size_t)(h & (n - 1));
+        it->next = nb[idx]; nb[idx] = it;
+        it = next;
+      }
+    }
+    free(rl_buckets);
+  }
+  rl_buckets = nb; rl_buckets_len = n;
+  return 0;
+}
+
+/* internal: remove stale entries from a bucket list and update rl_size */
+static void rl_cleanup_stale(time_t now) {
+  if (!rl_buckets) return;
+  /* evict entries older than 5 minutes */
+  const time_t STALE = 300;
+  for (size_t i = 0; i < rl_buckets_len; ++i) {
+    struct rl_entry **pp = &rl_buckets[i];
+    while (*pp) {
+      struct rl_entry *e = *pp;
+      if (now - e->last_ts > STALE) {
+        *pp = e->next;
+        free(e->key); free(e);
+        if (rl_size > 0) rl_size--;
+      } else {
+        pp = &e->next;
+      }
+    }
+  }
+}
+
+/* find entry by key, return pointer or NULL */
+static struct rl_entry *rl_find(const char *k) {
+  if (!rl_buckets || rl_buckets_len == 0) return NULL;
+  uint64_t h = rl_hash(k);
+  size_t idx = (size_t)(h & (rl_buckets_len - 1));
+  struct rl_entry *it = rl_buckets[idx];
+  while (it) {
+    if (strcmp(it->key, k) == 0) return it;
+    it = it->next;
+  }
+  return NULL;
+}
+
+/* insert new entry with key, returns pointer or NULL on OOM */
+static struct rl_entry *rl_insert_new(const char *k, uint32_t epoch, time_t now) {
+  if (!rl_buckets) return NULL;
+  uint64_t h = rl_hash(k);
+  size_t idx = (size_t)(h & (rl_buckets_len - 1));
+  struct rl_entry *e = calloc(1, sizeof(*e));
+  if (!e) return NULL;
+  e->key = strdup(k);
+  if (!e->key) { free(e); return NULL; }
+  e->epoch = epoch; e->last_ts = now; e->next = rl_buckets[idx]; rl_buckets[idx] = e; rl_size++; return e;
+}
+
+/* resize up if load factor > 2.0 (entries per bucket) */
+static int rl_maybe_resize(void) {
+  if (!rl_buckets) return rl_ensure_initialized(16);
+  if (rl_buckets_len == 0) return rl_ensure_initialized(16);
+  if (rl_size <= rl_buckets_len * 2) return 0;
+  size_t newb = rl_buckets_len << 1;
+  return rl_ensure_initialized(newb);
+}
+
+/* check rate limit: returns 0 if allowed, -1 if rate-limited */
+static int rl_check_and_update(http_request_t *r, const char *endpoint) {
+  char keybuf[256];
+  snprintf(keybuf, sizeof(keybuf), "%s|%s", endpoint, r->client_ip);
+  time_t now = time(NULL);
+  int rc = 0;
+  pthread_mutex_lock(&rl_lock);
+  if (!rl_buckets) { if (rl_ensure_initialized(64) != 0) { pthread_mutex_unlock(&rl_lock); return 0; } }
+  if (rl_maybe_resize() != 0) { /* best-effort: ignore resize failure */ }
+  struct rl_entry *e = rl_find(keybuf);
+  if (!e) {
+    /* insert */
+    if (!rl_insert_new(keybuf, rl_global_epoch, now)) {
+      /* OOM: fallback allow */
+      rc = 0;
+    } else {
+      rc = 0;
+    }
+  } else {
+    if (e->epoch != rl_global_epoch) {
+      e->epoch = rl_global_epoch; e->last_ts = now; rc = 0;
+    } else {
+      if (now - e->last_ts < 1) rc = -1; else { e->last_ts = now; rc = 0; }
+    }
+  }
+  /* lazy cleanup if map grows */
+  if (rl_size > rl_buckets_len * 4) rl_cleanup_stale(now);
+  pthread_mutex_unlock(&rl_lock);
+  if (rc != 0) {
+    /* log rate-limited event for diagnostics */
+  fprintf(stderr, "[status-plugin] rate-limited: endpoint=%s client=%s\n", endpoint, (r->client_ip[0] != '\0') ? r->client_ip : "-");
+    __sync_fetch_and_add(&g_rl_rate_limited_count, 1UL);
+  }
+  return rc;
+}
+
+/* admin reset: if client supplies correct key, bump rl_global_epoch (global reset) or bump single client by inserting new epoch */
+static int h_diagnostics_reset(http_request_t *r) {
+  char keybuf[128] = "";
+  const char *keyp = NULL;
+  /* check query param 'key' (no header helper available) */
+  if (get_query_param(r, "key", keybuf, sizeof(keybuf))) keyp = keybuf;
+  if (!g_admin_key || !keyp || strcmp(g_admin_key, keyp) != 0) {
+    send_json(r, "{\"error\":\"unauthorized\"}\n");
+    return 0;
+  }
+  char clientbuf[64] = "";
+  const char *client = NULL;
+  if (get_query_param(r, "client_ip", clientbuf, sizeof(clientbuf))) client = clientbuf;
+  if (!client) {
+    /* global reset */
+    pthread_mutex_lock(&rl_lock);
+    rl_global_epoch++;
+    pthread_mutex_unlock(&rl_lock);
+    send_json(r, "{\"ok\":true,\"scope\":\"global\"}\n");
+    return 0;
+  }
+  /* per-client: remove map entries containing the client IP so subsequent requests are fresh */
+  pthread_mutex_lock(&rl_lock);
+  if (rl_buckets && rl_buckets_len > 0) {
+    for (size_t bi = 0; bi < rl_buckets_len; ++bi) {
+      struct rl_entry **pp = &rl_buckets[bi];
+      while (*pp) {
+        struct rl_entry *e = *pp;
+        if (e->key && strstr(e->key, client)) {
+          *pp = e->next;
+          free(e->key); free(e);
+          if (rl_size > 0) rl_size--;
+        } else {
+          pp = &e->next;
+        }
+      }
+    }
+  }
+  pthread_mutex_unlock(&rl_lock);
+  char outbuf[128]; snprintf(outbuf, sizeof(outbuf), "{\"ok\":true,\"scope\":\"client\",\"client_ip\":\"%s\"}\n", client);
+  send_json(r, outbuf);
+  return 0;
+}
+
+/* Unauthenticated helper for clients to reset their own rate-limiter state.
+ * Removes any entries that contain the requesting client's IP so subsequent
+ * requests are treated as fresh. This does not require admin key and only
+ * affects the caller's IP across all endpoints.
+ */
+static int h_diagnostics_reset_me(http_request_t *r) {
+  const char *client = (r->client_ip[0] != '\0') ? r->client_ip : "";
+  int removed = 0;
+  pthread_mutex_lock(&rl_lock);
+  if (rl_buckets && rl_buckets_len > 0) {
+    for (size_t bi = 0; bi < rl_buckets_len; ++bi) {
+      struct rl_entry **pp = &rl_buckets[bi];
+      while (*pp) {
+        struct rl_entry *e = *pp;
+        if (e->key && strstr(e->key, client)) {
+          *pp = e->next;
+          free(e->key); free(e);
+          if (rl_size > 0) rl_size--;
+          removed++;
+        } else {
+          pp = &e->next;
+        }
+      }
+    }
+  }
+  pthread_mutex_unlock(&rl_lock);
+  char out[128]; snprintf(out, sizeof(out), "{\"ok\":true,\"scope\":\"self\",\"client_ip\":\"%s\",\"removed\":%d}\n", client, removed);
+  send_json(r, out);
+  return 0;
+}
 
 /* Plugin-local helper types (kept local to the plugin). These are small
  * convenience definitions that provide the in-process coalescing and fetch
@@ -2916,6 +3146,13 @@ static int h_airos(http_request_t *r);
 
 /* Full /status endpoint */
 static int h_status(http_request_t *r) {
+  if (rl_check_and_update(r, "/status") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
   char *buf = NULL; size_t cap = 16384, len = 0; buf = malloc(cap); if(!buf){ send_json(r, "{}\n"); return 0; } buf[0]=0;
   #define APPEND(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { free(buf); send_json(r,"{}\n"); return 0; } } while(0)
 
@@ -3572,23 +3809,30 @@ static int h_status_lite(http_request_t *r) {
   gettimeofday(&t_start, NULL);
   char *buf = NULL; size_t cap = 4096, len = 0; buf = malloc(cap); if(!buf){ send_json(r,"{}\n"); return 0; } buf[0]=0;
   #define APP_L(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { free(buf); send_json(r,"{}\n"); return 0; } } while(0)
+  /* Per-request timeout guard: abort with small JSON if processing exceeds limit */
+  struct timeval __req_start_tv, __req_now_tv;
+  gettimeofday(&__req_start_tv, NULL);
+#define CHECK_REQ_TIMEOUT_MS(ms) do { gettimeofday(&__req_now_tv, NULL); long __req_elapsed_ms = (__req_now_tv.tv_sec - __req_start_tv.tv_sec) * 1000 + (__req_now_tv.tv_usec - __req_start_tv.tv_usec) / 1000; if (__req_elapsed_ms > (ms)) { free(buf); send_json(r, "{\"error\":\"timeout\",\"message\":\"request processing exceeded time limit\"}\n"); return 0; } } while(0)
   APP_L("{");
   char hostname[256]=""; if(gethostname(hostname,sizeof(hostname))==0) hostname[sizeof(hostname)-1]=0; APP_L("\"hostname\":"); json_append_escaped(&buf,&len,&cap,hostname); APP_L(",");
   /* primary IPv4 */
   char ipaddr[128]=""; struct ifaddrs *ifap=NULL,*ifa=NULL; if(getifaddrs(&ifap)==0){ for(ifa=ifap;ifa;ifa=ifa->ifa_next){ if(!ifa->ifa_addr) continue; if(ifa->ifa_addr->sa_family==AF_INET){ struct sockaddr_in sa; memcpy(&sa,ifa->ifa_addr,sizeof(sa)); char b[INET_ADDRSTRLEN]; if(inet_ntop(AF_INET,&sa.sin_addr,b,sizeof(b)) && strcmp(b,"127.0.0.1")!=0){ snprintf(ipaddr,sizeof(ipaddr),"%s",b); break; } } } if(ifap) freeifaddrs(ifap);} APP_L("\"ip\":"); json_append_escaped(&buf,&len,&cap,ipaddr); APP_L(",");
+  CHECK_REQ_TIMEOUT_MS(1000);
   /* uptime */
   long uptime_seconds = get_uptime_seconds();
   char uptime_str[64]=""; format_duration(uptime_seconds, uptime_str, sizeof(uptime_str));
   char uptime_linux[160]=""; format_uptime_linux(uptime_seconds, uptime_linux, sizeof(uptime_linux));
   APP_L("\"uptime_str\":"); json_append_escaped(&buf,&len,&cap,uptime_str); APP_L(",");
   APP_L("\"uptime_linux\":"); json_append_escaped(&buf,&len,&cap,uptime_linux); APP_L(",");
+  CHECK_REQ_TIMEOUT_MS(1000);
   /* fetch queue and metrics: include lightweight counters so UI can show queue state during initial load */
   {
     int qlen = 0; struct fetch_req *fit = NULL; unsigned long m_d=0, m_r=0, m_s=0;
+  CHECK_REQ_TIMEOUT_MS(1000);
     pthread_mutex_lock(&g_fetch_q_lock);
     fit = g_fetch_q_head; while (fit) { qlen++; fit = fit->next; }
     pthread_mutex_unlock(&g_fetch_q_lock);
-    METRIC_LOAD_ALL(m_d, m_r, m_s);
+    CHECK_REQ_TIMEOUT_MS(1000);
     {
       unsigned long _de=0,_den=0,_ded=0,_dp=0,_dpn=0,_dpd=0;
       DEBUG_LOAD_ALL(_de,_den,_ded,_dp,_dpn,_dpd);
@@ -3898,6 +4142,13 @@ static int h_status_lite(http_request_t *r) {
  * Response schema: { "devices": [ ... ], "airos": { ... } }
  */
 static int h_devices_json(http_request_t *r) {
+  if (rl_check_and_update(r, "/devices.json") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
   if (g_log_request_debug) { fprintf(stderr, "[status-plugin] DEBUG: h_devices_json ENTRY - r=%p\n", (void*)r); fflush(stderr); }
   if (!r) {
     if (g_log_request_debug) { fprintf(stderr, "[status-plugin] DEBUG: h_devices_json called with NULL request\n"); fflush(stderr); }
@@ -4282,6 +4533,13 @@ static int h_devices_json(http_request_t *r) {
 
 // Minimal stats endpoint for UI polling
 static int h_status_stats(http_request_t *r) {
+  if (rl_check_and_update(r, "/status/stats") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
   char out[512];
   unsigned long dropped=0, retries=0, successes=0;
   METRIC_LOAD_ALL(dropped, retries, successes);
@@ -4466,6 +4724,13 @@ static int h_olsr_routes(http_request_t *r) {
 
 /* --- OLSR links endpoint with minimal neighbors --- */
 static int h_olsr_links(http_request_t *r) {
+  if (rl_check_and_update(r, "/olsr/links") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
   int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
   /* fetch links (use in-memory collector) */
   char *links_raw = NULL;
@@ -4617,6 +4882,13 @@ done:
  * link updates without forcing the collector to run on every request.
  */
 static int h_status_links_live(http_request_t *r) {
+  if (rl_check_and_update(r, "/status/links_live") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
   char *cached = NULL; size_t cached_len = 0;
   /* try to serve cached snapshot if fresh */
   if (endpoint_coalesce_try_start(&g_links_co, &cached, &cached_len)) {
@@ -4667,12 +4939,26 @@ static int h_status_links_live(http_request_t *r) {
 
 /* Debug endpoint: expose per-neighbor unique destination list to verify node counting */
 static int h_olsr_links_debug(http_request_t *r) {
+  if (rl_check_and_update(r, "/olsr/links_debug") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
   send_json(r, "{\"error\":\"debug disabled pending fix\"}\n");
   return 0;
 }
 
 /* --- Debug raw OLSR data: /olsr/raw (NOT for production; helps diagnose node counting) --- */
 static int h_olsr_raw(http_request_t *r) {
+  if (rl_check_and_update(r, "/olsr/raw") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
   char *links_raw=NULL; size_t ln=0; const char *eps_links[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
   for(const char **ep=eps_links; *ep && !links_raw; ++ep){ if(util_http_get_url_local(*ep, &links_raw, &ln, 1)==0 && links_raw && ln>0) break; if(links_raw){ free(links_raw); links_raw=NULL; ln=0; } }
   char *routes_raw=NULL; size_t rr=0; const char *eps_routes[]={"http://127.0.0.1:9090/routes","http://127.0.0.1:2006/routes","http://127.0.0.1:8123/routes",NULL};
@@ -4736,6 +5022,13 @@ static int h_status_olsr(http_request_t *r) {
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); if(olsr_links_raw) free(olsr_links_raw); if(routes_raw) free(routes_raw); if(topology_raw) free(topology_raw); return 0; }
 
 static int h_nodedb(http_request_t *r) {
+  if (rl_check_and_update(r, "/nodedb.json") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
   /* Only fetch if needed (respect TTL) */
   fetch_remote_nodedb_if_needed();
   pthread_mutex_lock(&g_nodedb_lock);
@@ -4778,6 +5071,13 @@ static int h_nodedb(http_request_t *r) {
 
 /* Force a refresh of the remote node_db (bypass TTL). Returns JSON status. */
 static int h_nodedb_refresh(http_request_t *r) {
+  if (rl_check_and_update(r, "/nodedb/refresh") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
   /* Make refresh non-blocking by default to avoid tying up the HTTP thread.
    * If caller explicitly requests blocking behaviour via ?wait=1, preserve
    * the previous semantics (enqueue and wait). Non-blocking calls will
@@ -5081,6 +5381,13 @@ static int h_status_traceroute(http_request_t *r) {
 
 /* Debug endpoint: current queue and queued request metadata */
 static int h_fetch_debug(http_request_t *r) {
+  if (rl_check_and_update(r, "/fetch_debug") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
   pthread_mutex_lock(&g_fetch_q_lock);
   int qlen = 0; struct fetch_req *it = g_fetch_q_head;
   while (it) { qlen++; it = it->next; }
@@ -5166,6 +5473,13 @@ static int h_capabilities_local(http_request_t *r) {
 
 /* Combined diagnostics endpoint: aggregate versions, capabilities, fetch_debug and status summary */
 static int h_diagnostics_json(http_request_t *r) {
+  /* rate-limit: per-client-per-endpoint (1s) */
+  if (rl_check_and_update(r, "/diagnostics.json") != 0) {
+    /* send 429 */
+    send_text(r, "{\"error\":\"rate_limited\",\"retry_after\":1}\n");
+    return 0;
+  }
+
   char *versions = NULL; size_t vlen = 0;
   char capbuf[512]; capbuf[0]=0;
   char *fetchbuf = NULL; size_t fcap = 1024, flen = 0;
@@ -5297,6 +5611,53 @@ static int h_diagnostics_json(http_request_t *r) {
   if (json_appendf(&out, &outlen, &outcap, "\"coalesce\":{\"devices_ttl\":%d,\"discover_ttl\":%d,\"traceroute_ttl\":%d,\"links_ttl\":%d},", g_coalesce_devices_ttl, g_coalesce_discover_ttl, g_coalesce_traceroute_ttl, g_coalesce_links_ttl) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
 
     if (json_appendf(&out, &outlen, &outcap, "\"debug\":{\"log_request_debug\":%d,\"last_fetch_msg\":\"%s\"}", g_log_request_debug, g_debug_last_fetch_msg) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+    /* rate limiter stats: total table size and per-endpoint counts */
+    if (json_appendf(&out, &outlen, &outcap, ",\"rate_limiter\":{\"rate_limited_count\":%lu,\"rl_size\":%zu,\"endpoints\":{",
+                        (unsigned long)g_rl_rate_limited_count, rl_size) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+    /* Build per-endpoint counts by scanning rl_table */
+    {
+      /* temporary simple hashmap: small fixed array of (endpoint, count) pairs */
+      #define EP_MAX 128
+      char *ep_keys[EP_MAX]; unsigned int ep_counts[EP_MAX]; int ep_used = 0;
+      for (int i = 0; i < EP_MAX; ++i) { ep_keys[i] = NULL; ep_counts[i] = 0; }
+      pthread_mutex_lock(&rl_lock);
+      if (rl_buckets && rl_buckets_len > 0) {
+        for (size_t bi = 0; bi < rl_buckets_len; ++bi) {
+          struct rl_entry *reit = rl_buckets[bi];
+            while (reit) {
+              if (reit->key) {
+                char *sep = strchr(reit->key, '|');
+                size_t elen = sep ? (size_t)(sep - reit->key) : strlen(reit->key);
+              if (elen > 0) {
+                  char tmp[128]; size_t copy = elen < sizeof(tmp)-1 ? elen : sizeof(tmp)-1; memcpy(tmp, reit->key, copy); tmp[copy]=0;
+                int found = -1;
+                for (int k = 0; k < ep_used; ++k) { if (ep_keys[k] && strcmp(ep_keys[k], tmp) == 0) { found = k; break; } }
+                if (found >= 0) {
+                  ep_counts[found]++;
+                } else {
+                  if (ep_used < EP_MAX) {
+                    ep_keys[ep_used] = strdup(tmp);
+                    ep_counts[ep_used] = 1;
+                    ep_used++;
+                  }
+                }
+              }
+              }
+              reit = reit->next;
+          }
+        }
+      }
+      pthread_mutex_unlock(&rl_lock);
+      /* emit endpoint counts */
+      for (int k = 0; k < ep_used; ++k) {
+        if (k) {
+          if (json_appendf(&out, &outlen, &outcap, ",") != 0) { /* emit best-effort */ }
+        }
+        if (json_appendf(&out, &outlen, &outcap, "\"%s\":%u", ep_keys[k], ep_counts[k]) != 0) { /* best-effort */ }
+        free(ep_keys[k]); ep_keys[k] = NULL;
+      }
+    }
+    if (json_appendf(&out, &outlen, &outcap, "}}") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
   }
   if (json_appendf(&out, &outlen, &outcap, "}\n") != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
 
@@ -5465,6 +5826,13 @@ static int h_embedded_appjs(http_request_t *r) {
 
 /* Simple proxy for selected OLSRd JSON queries (whitelist q values). */
 static int h_olsrd_json(http_request_t *r) {
+  if (rl_check_and_update(r, "/olsrd.json") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
   char q[64] = "links";
   (void)get_query_param(r, "q", q, sizeof(q));
   /* whitelist */
@@ -6159,6 +6527,13 @@ int olsrd_plugin_init(void) {
 
   /* Optional: allow overriding initial DNS/network wait (seconds) */
   const char *env_wait = getenv("OLSRD_STATUS_FETCH_STARTUP_WAIT");
+
+  /* optional admin key to protect reset endpoints */
+  const char *env_adm = getenv("OLSRD_STATUS_ADMIN_KEY");
+  if (env_adm && env_adm[0]) {
+    g_admin_key = strdup(env_adm);
+    fprintf(stderr, "[status-plugin] admin key set from environment\n");
+  }
   if (env_wait && env_wait[0]) {
     char *endptr = NULL; long w = strtol(env_wait, &endptr, 10);
     if (endptr && *endptr == '\0' && w >= 0 && w <= 300) {
@@ -6192,6 +6567,8 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/olsr/links", &h_olsr_links);
   http_server_register_handler("/olsr/links_debug", &h_olsr_links_debug);
   http_server_register_handler("/status/links_live", &h_status_links_live);
+  http_server_register_handler("/diagnostics/reset", &h_diagnostics_reset);
+  http_server_register_handler("/diagnostics/reset_me", &h_diagnostics_reset_me);
   http_server_register_handler("/olsr/routes", &h_olsr_routes);
   http_server_register_handler("/olsr/raw", &h_olsr_raw); /* debug */
   http_server_register_handler("/olsrd.json", &h_olsrd_json);
@@ -6466,6 +6843,13 @@ static int h_txtinfo(http_request_t *r) {
 
 /* /status/debug - small diagnostic JSON with cache TTL and timestamps */
 static int h_status_debug(http_request_t *r) {
+  if (rl_check_and_update(r, "/status/debug") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
   (void)r;
   time_t nowt = time(NULL);
   time_t cache_ts = 0;
@@ -6483,6 +6867,13 @@ static int h_status_debug(http_request_t *r) {
   return 0;
 }
 static int h_jsoninfo(http_request_t *r) {
+  if (rl_check_and_update(r, "/jsoninfo") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
   char q[64]="version";
   (void)get_query_param(r, "q", q, sizeof(q));
   char url[256]; snprintf(url, sizeof(url), "http://127.0.0.1:9090/%s", q);
@@ -6843,6 +7234,13 @@ static int h_connections(http_request_t *r) {
 }
 
 static int h_connections_json(http_request_t *r) {
+  if (rl_check_and_update(r, "/connections.json") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
   char *out=NULL; size_t n=0;
   if (render_connections_json(&out,&n)==0 && out && n>0) {
     http_send_status(r,200,"OK");
@@ -6857,6 +7255,13 @@ static int h_connections_json(http_request_t *r) {
 }
 
 static int h_versions_json(http_request_t *r) {
+  if (rl_check_and_update(r, "/versions.json") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
   /* Use internal generator rather than an external shell script */
   char *out = NULL; size_t n = 0;
   if (generate_versions_json(&out, &n) == 0 && out && n>0) {

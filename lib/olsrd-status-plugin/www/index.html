@@ -217,6 +217,22 @@
           </div>
         </div>
 
+        <!-- Diagnostics modal (opened from footer diagnostics button) -->
+        <div id="diagnostics-modal" class="modal" style="display:none; position:fixed; left:0; right:0; bottom:0; top:0; background:rgba(0,0,0,0.4); z-index:9999;">
+          <div style="position:absolute; left:10%; right:10%; top:10%; bottom:10%; background:#fff; border-radius:6px; overflow:auto; padding:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <h4 style="margin:0">Diagnostics</h4>
+              <button id="diag-close" class="btn btn-default btn-sm">Close</button>
+            </div>
+            <div style="display:flex; gap:8px; margin-bottom:8px;">
+              <button class="btn btn-default btn-sm diag-nav" data-page="params">Parameters</button>
+              <button class="btn btn-default btn-sm diag-nav" data-page="intervals">Intervals</button>
+              <button class="btn btn-default btn-sm diag-nav" data-page="logging">Logging</button>
+            </div>
+            <div id="diag-content" style="min-height:200px; font-size:0.9em;"></div>
+          </div>
+        </div>
+
         <!-- Statistics -->
         <div id="tab-stats" class="tab-pane">
           <h3>Statistics</h3>
