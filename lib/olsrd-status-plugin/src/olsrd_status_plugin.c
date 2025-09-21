@@ -2900,6 +2900,25 @@ static int normalize_olsrd_neighbors(const char *raw, char **outbuf, size_t *out
   if (!p) p = strstr(raw, "\"link\""); /* some variants */
   const char *arr = p ? strchr(p,'[') : NULL;
   if (!arr) { arr = strchr(raw,'['); if(!arr) return -1; }
+  /* detect routes/topology blocks for counting helpers (reuse same heuristics as links normalizer) */
+  const char *routes_section = strstr(raw, "\"routes\"");
+  const char *topology_section = strstr(raw, "\"topology\"");
+  if (!routes_section) {
+    const char *alt = strstr(raw, "\"olsr_routes_raw\"");
+    if (alt) { const char *arrp = strchr(alt, '['); if (arrp) routes_section = arrp - 10 > alt ? alt : arrp; }
+  }
+  if (!topology_section) {
+    const char *alt = strstr(raw, "\"olsr_topology_raw\"");
+    if (alt) { const char *arrp = strchr(alt, '['); if (arrp) topology_section = arrp - 10 > alt ? alt : arrp; }
+  }
+  if (!topology_section) {
+    const char *candidates[] = { "\"lastHopIP\"", "\"lastHop\"", "\"destinationIP\"", "\"destination\"", "\"destIpAddress\"", NULL };
+    for (int ci = 0; candidates[ci] && !topology_section; ++ci) {
+      const char *found = strstr(raw, candidates[ci]);
+      if (found) { const char *b = found; while (b > raw && *b != '[') --b; if (b > raw && *b == '[') topology_section = b; }
+    }
+  }
+  const char *neighbors_section = strstr(raw, "\"neighbors\"");
   const char *q = arr; int depth=0; size_t cap=4096,len=0; char *buf=malloc(cap); if(!buf) return -1; buf[0]=0;
   json_buf_append(&buf,&len,&cap,"["); int first=1;
   while(*q){
@@ -2908,24 +2927,56 @@ static int normalize_olsrd_neighbors(const char *raw, char **outbuf, size_t *out
     if(*q=='{'){
       const char *obj=q; int od=0; const char *r=q; while(*r){ if(*r=='{') od++; else if(*r=='}'){ od--; if(od==0){ r++; break; } } r++; }
       if(!r||r<=obj) break;
-      char *v; size_t vlen; char originator[128]=""; char bindto[64]=""; char lq[32]=""; char nlq[32]=""; char cost[32]=""; char metric[32]=""; char hostname[256]="";
-      if(find_json_string_value(obj,"neighbor_originator",&v,&vlen) || find_json_string_value(obj,"originator",&v,&vlen) || find_json_string_value(obj,"ipAddress",&v,&vlen)) snprintf(originator,sizeof(originator),"%.*s",(int)vlen,v);
-      if(find_json_string_value(obj,"link_bindto",&v,&vlen)) snprintf(bindto,sizeof(bindto),"%.*s",(int)vlen,v);
-      if(find_json_string_value(obj,"linkQuality",&v,&vlen) || find_json_string_value(obj,"lq",&v,&vlen)) snprintf(lq,sizeof(lq),"%.*s",(int)vlen,v);
-      if(find_json_string_value(obj,"neighborLinkQuality",&v,&vlen) || find_json_string_value(obj,"nlq",&v,&vlen)) snprintf(nlq,sizeof(nlq),"%.*s",(int)vlen,v);
-      if(find_json_string_value(obj,"linkCost",&v,&vlen) || find_json_string_value(obj,"cost",&v,&vlen)) snprintf(cost,sizeof(cost),"%.*s",(int)vlen,v);
-      if(find_json_string_value(obj,"metric",&v,&vlen)) snprintf(metric,sizeof(metric),"%.*s",(int)vlen,v);
+    char *v; size_t vlen; char originator[128]=""; char bindto[64]=""; char lq[32]=""; char nlq[32]=""; char cost[32]=""; char metric[32]=""; char hostname[256]="";
+    /* olsr2/nhdp fields */
+    char ifname[64] = ""; char link_mac[64] = ""; char link_status[64] = ""; char domain_metric_in[32] = ""; char domain_metric_out[32] = "";
+    if(find_json_string_value(obj,"neighbor_originator",&v,&vlen) || find_json_string_value(obj,"originator",&v,&vlen) || find_json_string_value(obj,"ipAddress",&v,&vlen)) snprintf(originator,sizeof(originator),"%.*s",(int)vlen,v);
+    if(find_json_string_value(obj,"link_bindto",&v,&vlen) || find_json_string_value(obj,"if",&v,&vlen)) snprintf(bindto,sizeof(bindto),"%.*s",(int)vlen,v);
+    if(find_json_string_value(obj,"linkQuality",&v,&vlen) || find_json_string_value(obj,"lq",&v,&vlen)) snprintf(lq,sizeof(lq),"%.*s",(int)vlen,v);
+    if(find_json_string_value(obj,"neighborLinkQuality",&v,&vlen) || find_json_string_value(obj,"nlq",&v,&vlen)) snprintf(nlq,sizeof(nlq),"%.*s",(int)vlen,v);
+    if(find_json_string_value(obj,"linkCost",&v,&vlen) || find_json_string_value(obj,"cost",&v,&vlen)) snprintf(cost,sizeof(cost),"%.*s",(int)vlen,v);
+    if(find_json_string_value(obj,"metric",&v,&vlen)) snprintf(metric,sizeof(metric),"%.*s",(int)vlen,v);
+    if(find_json_string_value(obj,"if",&v,&vlen)) snprintf(ifname,sizeof(ifname),"%.*s",(int)vlen,v);
+    if(find_json_string_value(obj,"link_mac",&v,&vlen) || find_json_string_value(obj,"linkMac",&v,&vlen)) snprintf(link_mac,sizeof(link_mac),"%.*s",(int)vlen,v);
+    if(find_json_string_value(obj,"link_status",&v,&vlen) || find_json_string_value(obj,"status",&v,&vlen)) snprintf(link_status,sizeof(link_status),"%.*s",(int)vlen,v);
+    if(find_json_string_value(obj,"domain_metric_in",&v,&vlen) || find_json_string_value(obj,"domainMetricIn",&v,&vlen)) snprintf(domain_metric_in,sizeof(domain_metric_in),"%.*s",(int)vlen,v);
+    if(find_json_string_value(obj,"domain_metric_out",&v,&vlen) || find_json_string_value(obj,"domainMetricOut",&v,&vlen)) snprintf(domain_metric_out,sizeof(domain_metric_out),"%.*s",(int)vlen,v);
       if(originator[0]) lookup_hostname_cached(originator, hostname, sizeof(hostname));
   if(!first) json_buf_append(&buf,&len,&cap,",");
   first=0;
-      json_buf_append(&buf,&len,&cap,"{\"originator\":"); json_append_escaped(&buf,&len,&cap,originator);
-      json_buf_append(&buf,&len,&cap,",\"bindto\":"); json_append_escaped(&buf,&len,&cap,bindto);
-      json_buf_append(&buf,&len,&cap,",\"lq\":"); json_append_escaped(&buf,&len,&cap,lq);
-      json_buf_append(&buf,&len,&cap,",\"nlq\":"); json_append_escaped(&buf,&len,&cap,nlq);
-      json_buf_append(&buf,&len,&cap,",\"cost\":"); json_append_escaped(&buf,&len,&cap,cost);
-      json_buf_append(&buf,&len,&cap,",\"metric\":"); json_append_escaped(&buf,&len,&cap,metric);
-      json_buf_append(&buf,&len,&cap,",\"hostname\":"); json_append_escaped(&buf,&len,&cap,hostname);
-      json_buf_append(&buf,&len,&cap,"}");
+    json_buf_append(&buf,&len,&cap,"{\"originator\":"); json_append_escaped(&buf,&len,&cap,originator);
+    json_buf_append(&buf,&len,&cap,",\"bindto\":"); json_append_escaped(&buf,&len,&cap,bindto);
+    json_buf_append(&buf,&len,&cap,",\"if\":"); json_append_escaped(&buf,&len,&cap,ifname);
+    json_buf_append(&buf,&len,&cap,",\"link_mac\":"); json_append_escaped(&buf,&len,&cap,link_mac);
+    json_buf_append(&buf,&len,&cap,",\"link_status\":"); json_append_escaped(&buf,&len,&cap,link_status);
+    json_buf_append(&buf,&len,&cap,",\"lq\":"); json_append_escaped(&buf,&len,&cap,lq);
+    json_buf_append(&buf,&len,&cap,",\"nlq\":"); json_append_escaped(&buf,&len,&cap,nlq);
+    json_buf_append(&buf,&len,&cap,",\"cost\":"); json_append_escaped(&buf,&len,&cap,cost);
+    json_buf_append(&buf,&len,&cap,",\"metric\":"); json_append_escaped(&buf,&len,&cap,metric);
+    json_buf_append(&buf,&len,&cap,",\"domain_metric_in\":"); json_append_escaped(&buf,&len,&cap,domain_metric_in);
+    json_buf_append(&buf,&len,&cap,",\"domain_metric_out\":"); json_append_escaped(&buf,&len,&cap,domain_metric_out);
+    /* count routes and unique nodes for this originator (best-effort) */
+    char routes_str[32] = "0"; char nodes_str[32] = "0";
+    int routes = 0; int nodes = 0;
+    /* Prefer authoritative routes_section (if present) */
+    if (routes_section) routes = count_routes_for_ip(routes_section, originator);
+    /* topology-derived unique node counts */
+    if (topology_section) {
+      nodes = count_unique_nodes_for_ip(topology_section, originator);
+      if (nodes == 0) nodes = count_nodes_for_ip(topology_section, originator);
+    }
+    /* Fallback: try neighbors two-hop heuristic */
+    if (nodes == 0 && neighbors_section) {
+      int twohop = neighbor_twohop_for_ip(neighbors_section, originator);
+      if (twohop > 0) nodes = twohop;
+      if (routes == 0 && twohop > 0) routes = twohop; /* approximate */
+    }
+    snprintf(routes_str,sizeof(routes_str),"%d",routes);
+    snprintf(nodes_str,sizeof(nodes_str),"%d",nodes);
+    json_buf_append(&buf,&len,&cap,",\"routes\":"); json_append_escaped(&buf,&len,&cap,routes_str);
+    json_buf_append(&buf,&len,&cap,",\"nodes\":"); json_append_escaped(&buf,&len,&cap,nodes_str);
+    json_buf_append(&buf,&len,&cap,",\"hostname\":"); json_append_escaped(&buf,&len,&cap,hostname);
+    json_buf_append(&buf,&len,&cap,"}");
   q=r; continue;
     }
     q++;
@@ -6726,7 +6777,6 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/capabilities", &h_capabilities_local);
   http_server_register_handler("/nodedb/refresh", &h_nodedb_refresh);
   http_server_register_handler("/metrics", &h_prometheus_metrics);
-  /* legacy txtinfo/jsoninfo endpoints removed - in-memory collectors provide normalized data via modern endpoints */
   http_server_register_handler("/olsrd",    &h_olsrd);
   http_server_register_handler("/olsr2",    &h_olsrd);
   http_server_register_handler("/discover", &h_discover);
