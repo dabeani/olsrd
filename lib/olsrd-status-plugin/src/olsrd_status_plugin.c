@@ -4209,71 +4209,39 @@ static int h_status_lite(http_request_t *r) {
     unsigned long olsr_routes = unique_routes;
     unsigned long olsr_nodes = unique_nodes;
     if (olsr_routes == 0 && olsr_nodes == 0) {
-      /* probe local endpoints similar to h_status_stats fallback */
-      char *links_raw = NULL; size_t lr = 0;
-      char *routes_raw = NULL; size_t rr = 0;
-      char *topology_raw = NULL; size_t tr = 0;
-      const char *link_eps[] = { "http://127.0.0.1:9090/links", "http://127.0.0.1:2006/links", "http://127.0.0.1:8123/links", NULL };
-      const char *routes_eps[] = { "http://127.0.0.1:9090/routes", "http://127.0.0.1:2006/routes", "http://127.0.0.1:8123/routes", NULL };
-      const char *topo_eps[] = { "http://127.0.0.1:9090/topology", "http://127.0.0.1:2006/topology", "http://127.0.0.1:8123/topology", NULL };
-      for (const char **ep = link_eps; *ep && !links_raw; ++ep) {
-        if (util_http_get_url_local(*ep, &links_raw, &lr, 1) == 0 && links_raw && lr > 0) break;
-        if (links_raw) { free(links_raw); links_raw = NULL; lr = 0; }
-      }
-      for (const char **ep = routes_eps; *ep && !routes_raw; ++ep) {
-        if (util_http_get_url_local(*ep, &routes_raw, &rr, 1) == 0 && routes_raw && rr > 0) break;
-        if (routes_raw) { free(routes_raw); routes_raw = NULL; rr = 0; }
-      }
-      for (const char **ep = topo_eps; *ep && !topology_raw; ++ep) {
-        if (util_http_get_url_local(*ep, &topology_raw, &tr, 1) == 0 && topology_raw && tr > 0) break;
-        if (topology_raw) { free(topology_raw); topology_raw = NULL; tr = 0; }
-      }
-      if (links_raw || routes_raw || topology_raw) {
-        size_t clen = (links_raw?strlen(links_raw):0) + (routes_raw?strlen(routes_raw):0) + (topology_raw?strlen(topology_raw):0) + 8;
-        char *combined = malloc(clen+1);
-        if (combined) {
-          combined[0]=0;
-          if (links_raw) { strncat(combined, links_raw, clen); strncat(combined, "\n", clen); }
-          if (routes_raw) { strncat(combined, routes_raw, clen); strncat(combined, "\n", clen); }
-          if (topology_raw) { strncat(combined, topology_raw, clen); strncat(combined, "\n", clen); }
-          char *norm = NULL; size_t nn = 0;
-          if (normalize_olsrd_links(combined, &norm, &nn) == 0 && norm && nn > 0) {
-            unsigned long sum_routes = 0, sum_nodes = 0;
-            const char *p = norm;
-            while ((p = strstr(p, "\"routes\":")) != NULL) {
-              p += 9;
-              while (*p && (*p == ' ' || *p == '"' || *p == '\\' || *p == ':' )) p++;
-              sum_routes += strtoul(p, NULL, 10);
-            }
-            p = norm;
-            while ((p = strstr(p, "\"nodes\":")) != NULL) {
-              p += 8;
-              while (*p && (*p == ' ' || *p == '"' || *p == '\\' || *p == ':' )) p++;
-              sum_nodes += strtoul(p, NULL, 10);
-            }
-            if (sum_routes > 0 || sum_nodes > 0) {
-              olsr_routes = sum_routes; olsr_nodes = sum_nodes;
-              /* Persist computed lightweight counts so other handlers (and metrics) see them */
-              METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
-            }
+      /* Build lightweight counts using in-memory collectors only (no HTTP probes) */
+      struct autobuf rab;
+      struct autobuf tab;
+      if (abuf_init(&rab, 4096) == 0) {
+        if (status_collect_routes(&rab), rab.len > 0) {
+          char *combined = malloc(rab.len + 1);
+          if (combined) { memcpy(combined, rab.buf, rab.len); combined[rab.len] = '\0';
+            char *norm = NULL; size_t nn = 0;
+            if (normalize_olsrd_links(combined, &norm, &nn) == 0 && norm && nn > 0) {
+              unsigned long sum_routes = 0, sum_nodes = 0;
+              const char *p = norm;
+              while ((p = strstr(p, "\"routes\":")) != NULL) {
+                p += 9; while (*p && (*p == ' ' || *p == '"' || *p == '\\' || *p == ':' )) p++; sum_routes += strtoul(p, NULL, 10);
+              }
+              p = norm;
+              while ((p = strstr(p, "\"nodes\":")) != NULL) {
+                p += 8; while (*p && (*p == ' ' || *p == '"' || *p == '\\' || *p == ':' )) p++; sum_nodes += strtoul(p, NULL, 10);
+              }
+              if (sum_routes > 0 || sum_nodes > 0) { olsr_routes = sum_routes; olsr_nodes = sum_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes); }
               else {
-                /* If normalization returned no counts, attempt a lightweight heuristic
-                 * to extract IPv4 addresses from the combined probe as a last resort. */
                 unsigned long h_nodes = 0, h_routes = 0;
                 heuristic_count_ips_in_raw(combined, &h_nodes, &h_routes);
-                if (h_nodes > 0 || h_routes > 0) {
-                  olsr_routes = h_routes; olsr_nodes = h_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
-                  if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: heuristic counts applied nodes=%lu routes=%lu\n", h_nodes, h_routes);
-                }
+                if (h_nodes > 0 || h_routes > 0) { olsr_routes = h_routes; olsr_nodes = h_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes); if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: heuristic counts applied nodes=%lu routes=%lu\n", h_nodes, h_routes); }
               }
+            }
+            if (norm) free(norm);
+            free(combined);
           }
-          if (norm) free(norm);
-          free(combined);
         }
+        abuf_free(&rab);
       }
-      if (links_raw) free(links_raw);
-      if (routes_raw) free(routes_raw);
-      if (topology_raw) free(topology_raw);
+      /* topology collector may provide additional data; attempt and ignore if empty */
+      if (abuf_init(&tab, 4096) == 0) { status_collect_topology(&tab); abuf_free(&tab); }
     }
     /* Attempt to include memory stats (Linux /proc/meminfo) for the lightweight payload */
     unsigned long mem_total_kb = 0, mem_free_kb = 0, mem_available_kb = 0;
@@ -5147,12 +5115,39 @@ static int h_olsr_raw(http_request_t *r) {
     http_write(r, b, strlen(b));
     return 0;
   }
-  char *links_raw=NULL; size_t ln=0; const char *eps_links[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
-  for(const char **ep=eps_links; *ep && !links_raw; ++ep){ if(util_http_get_url_local(*ep, &links_raw, &ln, 1)==0 && links_raw && ln>0) break; if(links_raw){ free(links_raw); links_raw=NULL; ln=0; } }
-  char *routes_raw=NULL; size_t rr=0; const char *eps_routes[]={"http://127.0.0.1:9090/routes","http://127.0.0.1:2006/routes","http://127.0.0.1:8123/routes",NULL};
-  for(const char **ep=eps_routes; *ep && !routes_raw; ++ep){ if(util_http_get_url_local(*ep, &routes_raw, &rr, 1)==0 && routes_raw && rr>0) break; if(routes_raw){ free(routes_raw); routes_raw=NULL; rr=0; } }
-  char *topology_raw=NULL; size_t trn=0; const char *eps_topo[]={"http://127.0.0.1:9090/topology","http://127.0.0.1:2006/topology","http://127.0.0.1:8123/topology",NULL};
-  for(const char **ep=eps_topo; *ep && !topology_raw; ++ep){ if(util_http_get_url_local(*ep, &topology_raw, &trn, 1)==0 && topology_raw && trn>0) break; if(topology_raw){ free(topology_raw); topology_raw=NULL; trn=0; } }
+  char *links_raw = NULL;
+  char *routes_raw = NULL;
+  char *topology_raw = NULL;
+  /* Use in-memory collectors to populate raw fields (no size vars needed) */
+  {
+    struct autobuf lab;
+    if (abuf_init(&lab, 8192) == 0) {
+      status_collect_links(&lab);
+      if (lab.len > 0) {
+        links_raw = malloc(lab.len + 1);
+        if (links_raw) { memcpy(links_raw, lab.buf, lab.len); links_raw[lab.len] = '\0'; }
+      }
+      abuf_free(&lab);
+    }
+    struct autobuf rab;
+    if (abuf_init(&rab, 4096) == 0) {
+      status_collect_routes(&rab);
+      if (rab.len > 0) {
+        routes_raw = malloc(rab.len + 1);
+        if (routes_raw) { memcpy(routes_raw, rab.buf, rab.len); routes_raw[rab.len] = '\0'; }
+      }
+      abuf_free(&rab);
+    }
+    struct autobuf tab;
+    if (abuf_init(&tab, 4096) == 0) {
+      status_collect_topology(&tab);
+      if (tab.len > 0) {
+        topology_raw = malloc(tab.len + 1);
+        if (topology_raw) { memcpy(topology_raw, tab.buf, tab.len); topology_raw[tab.len] = '\0'; }
+      }
+      abuf_free(&tab);
+    }
+  }
   char *buf=NULL; size_t cap=8192,len=0; buf=malloc(cap); if(!buf){ send_json(r,"{\"err\":\"oom\"}\n"); goto done; } buf[0]=0;
   #define APP_RAW(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { if(buf){ free(buf);} send_json(r,"{\"err\":\"oom\"}\n"); goto done; } } while(0)
   APP_RAW("{");
@@ -5195,14 +5190,25 @@ static int h_status_olsr(http_request_t *r) {
   APP2("\"default_route\":{"); APP2("\"ip\":"); json_append_escaped(&buf,&len,&cap,def_ip); APP2(",\"dev\":"); json_append_escaped(&buf,&len,&cap,def_dev); APP2("},");
   /* attempt OLSR links minimal (separate flags) */
   int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
-  char *olsr_links_raw=NULL; size_t oln=0; const char *eps[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
-  for(const char **ep=eps; *ep && !olsr_links_raw; ++ep){ if(util_http_get_url_local(*ep, &olsr_links_raw, &oln, 1)==0 && olsr_links_raw && oln>0) break; if(olsr_links_raw){ free(olsr_links_raw); olsr_links_raw=NULL; oln=0; } }
-  /* also get routes & topology to enrich route/node counts like /olsr/links */
-  char *routes_raw=NULL; size_t rr=0; util_http_get_url_local("http://127.0.0.1:9090/routes", &routes_raw,&rr, 1);
-  char *topology_raw=NULL; size_t tr=0; util_http_get_url_local("http://127.0.0.1:9090/topology", &topology_raw,&tr, 1);
+  char *olsr_links_raw = NULL;
+  char *routes_raw = NULL;
+  char *topology_raw = NULL;
+  /* Use in-memory collectors for OLSR subset data */
+  {
+    struct autobuf lab;
+    if (abuf_init(&lab, 4096) == 0) {
+      status_collect_links(&lab);
+      if (lab.len > 0) { olsr_links_raw = malloc(lab.len + 1); if (olsr_links_raw) { memcpy(olsr_links_raw, lab.buf, lab.len); olsr_links_raw[lab.len] = '\0'; } }
+      abuf_free(&lab);
+    }
+    struct autobuf rab;
+    if (abuf_init(&rab, 4096) == 0) { status_collect_routes(&rab); if (rab.len > 0) { routes_raw = malloc(rab.len + 1); if (routes_raw) { memcpy(routes_raw, rab.buf, rab.len); routes_raw[rab.len] = '\0'; } } abuf_free(&rab); }
+    struct autobuf tab;
+    if (abuf_init(&tab, 4096) == 0) { status_collect_topology(&tab); if (tab.len > 0) { topology_raw = malloc(tab.len + 1); if (topology_raw) { memcpy(topology_raw, tab.buf, tab.len); topology_raw[tab.len] = '\0'; } } abuf_free(&tab); }
+  }
   APP2("\"olsr2_on\":%s,", olsr2_on?"true":"false");
   APP2("\"olsrd_on\":%s,", olsrd_on?"true":"false");
-  if(olsr_links_raw && oln>0){
+  if (olsr_links_raw) {
     size_t l1=strlen(olsr_links_raw); size_t l2=routes_raw?strlen(routes_raw):0; size_t l3=topology_raw?strlen(topology_raw):0;
     char *combined_raw=malloc(l1+l2+l3+8); if(combined_raw){ size_t off=0; memcpy(combined_raw+off,olsr_links_raw,l1); off+=l1; combined_raw[off++]='\n'; if(l2){ memcpy(combined_raw+off,routes_raw,l2); off+=l2; combined_raw[off++]='\n'; } if(l3){ memcpy(combined_raw+off,topology_raw,l3); off+=l3; } combined_raw[off]=0; char *norm=NULL; size_t nn=0; if(normalize_olsrd_links(combined_raw,&norm,&nn)==0 && norm){ APP2("\"links\":%s", norm); free(norm);} else { APP2("\"links\":[]"); } free(combined_raw);} else { APP2("\"links\":[]"); }
   } else { APP2("\"links\":[]"); }
