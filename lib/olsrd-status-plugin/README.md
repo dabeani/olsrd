@@ -117,6 +117,21 @@ A few debug traces are gated and can be enabled at runtime:
 - Per-request HTTP debug: enable the plugin parameter `log_request_debug` in your `olsrd.conf` plugin block or set the environment variable `OLSRD_STATUS_LOG_REQUEST_DEBUG=1` (alias `OLSRD_LOG_REQ_DBG=1`) to emit concise per-request debug messages for supported endpoints. Default is `0` (off).
 - UBNT discovery debug: set `OLSRD_STATUS_UBNT_DEBUG=1` to enable runtime UBNT discovery tracing (socket, send/recv and TLV parsing). This matches the debug output of the standalone discovery CLI when run with `-d`.
 
+Access logging default and opt-in
+--------------------------------
+The plugin disables per-request access logging by default to avoid noisy stderr output in normal operation. To enable access logging set one of the following environment variables to a non-zero value:
+
+- Preferred (new): `OLSRD_STATUS_FETCH_LOG_QUEUE=1` — enables fetch/queue and per-request access logging and metrics.
+- Legacy/backwards-compatible: `OLSRD_STATUS_ACCESS_LOG=1` — also enables access logging when present.
+
+To explicitly disable access logging (even if an env var exists), set the variable to `0`.
+
+Example (enable access logging):
+
+```bash
+export OLSRD_STATUS_FETCH_LOG_QUEUE=1
+```
+
 
 ## Build / Install
 Build:
