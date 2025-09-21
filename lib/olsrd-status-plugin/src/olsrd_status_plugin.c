@@ -65,6 +65,10 @@ static int resolve_ip_to_hostname(const char *ip, char *out, size_t outlen) {
   return 0;
 }
 
+/* Cached hostname lookup forward declaration (defined later). Placed here so
+ * callers early in the file can use cached lookups without implicit decls. */
+static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen);
+
 /* Runtime check for UBNT debug env var. Prefer environment toggle so operators
  * can enable verbose UBNT discovery traces without recompiling. Returns 1 when
  * OLSRD_STATUS_UBNT_DEBUG is truthy (1,y,Y), otherwise 0.
@@ -113,7 +117,7 @@ static int g_cfg_fetch_backoff_set = 0;
 
 /* Node DB remote auto-update cache */
 static char   g_nodedb_url[512] = "https://ff.cybercomm.at/node_db.json"; /* override via plugin param nodedb_url */
-static int    g_nodedb_ttl = 300; /* seconds */
+static int    g_nodedb_ttl = 3600; /* seconds (default changed to 1 hour) */
 static time_t g_nodedb_last_fetch = 0; /* epoch of last successful fetch */
 static char  *g_nodedb_cached = NULL; /* malloc'ed JSON blob */
 static size_t g_nodedb_cached_len = 0;
@@ -182,6 +186,10 @@ static int g_cfg_devices_discover_interval_set = 0;
  * via PlParam 'ubnt_probe_window_ms' or env OLSRD_STATUS_UBNT_PROBE_WINDOW_MS. */
 static int g_ubnt_probe_window_ms = 1000;
 static int g_cfg_ubnt_probe_window_ms_set = 0;
+/* Cap (ms) used for select timeout during ubnt discovery; default 100ms. Configurable via
+ * PlParam 'ubnt_select_timeout_cap_ms' or env 'OLSRD_STATUS_UBNT_SELECT_TIMEOUT_CAP_MS'. */
+static int g_ubnt_select_timeout_cap_ms = 100;
+static int g_cfg_ubnt_select_timeout_cap_ms_set = 0;
 /* UBNT discover cache TTL in seconds. Default 300s. Configurable via
  * PlParam 'ubnt_cache_ttl_s' or env OLSRD_STATUS_UBNT_CACHE_TTL_S.
  */
@@ -1484,7 +1492,9 @@ static void __attribute__((unused)) arp_enrich_ip(const char *ip, char *mac_out,
     struct in_addr ina;
     if (inet_aton(ip, &ina)) {
       char _rhost[NI_MAXHOST]; _rhost[0] = '\0';
-      if (resolve_ip_to_hostname(ip, _rhost, sizeof(_rhost)) == 0) {
+      /* use cached lookup to reduce duplicate reverse DNS calls */
+      lookup_hostname_cached(ip, _rhost, sizeof(_rhost));
+      if (_rhost[0]) {
         if (host_len > 0) {
           snprintf(host_out, host_len, "%s", _rhost);
           host_out[host_len - 1] = '\0';
@@ -1905,7 +1915,7 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       if (find_json_string_value(obj, "localIP", &v, &vlen) || find_json_string_value(obj, "localIp", &v, &vlen) || find_json_string_value(obj, "local", &v, &vlen)) snprintf(local,sizeof(local),"%.*s",(int)vlen,v);
       if (find_json_string_value(obj, "remoteIP", &v, &vlen) || find_json_string_value(obj, "remoteIp", &v, &vlen) || find_json_string_value(obj, "remote", &v, &vlen) || find_json_string_value(obj, "neighborIP", &v, &vlen)) snprintf(remote,sizeof(remote),"%.*s",(int)vlen,v);
       if (!remote[0]) { q = r; continue; }
-  if (remote[0]) { char rv[256]; if (resolve_ip_to_hostname(remote, rv, sizeof(rv)) == 0) snprintf(remote_host, sizeof(remote_host), "%s", rv); }
+  if (remote[0]) { /* use cached lookup */ lookup_hostname_cached(remote, remote_host, sizeof(remote_host)); }
       if (find_json_string_value(obj, "linkQuality", &v, &vlen)) snprintf(lq,sizeof(lq),"%.*s",(int)vlen,v);
       if (find_json_string_value(obj, "neighborLinkQuality", &v, &vlen)) snprintf(nlq,sizeof(nlq),"%.*s",(int)vlen,v);
       if (find_json_string_value(obj, "linkCost", &v, &vlen)) snprintf(cost,sizeof(cost),"%.*s",(int)vlen,v);
@@ -1990,7 +2000,7 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       if(find_json_string_value(obj,"localIP",&v,&vlen) || find_json_string_value(obj,"local",&v,&vlen)) snprintf(local,sizeof(local),"%.*s",(int)vlen,v);
       if(find_json_string_value(obj,"remoteIP",&v,&vlen) || find_json_string_value(obj,"remote",&v,&vlen) || find_json_string_value(obj,"neighborIP",&v,&vlen)) snprintf(remote,sizeof(remote),"%.*s",(int)vlen,v);
       if(!remote[0]) { scan=r; continue; }
-  if(remote[0]){ char rv[256]; if (resolve_ip_to_hostname(remote, rv, sizeof(rv)) == 0) snprintf(remote_host, sizeof(remote_host), "%s", rv); }
+  if(remote[0]){ /* use cached lookup */ lookup_hostname_cached(remote, remote_host, sizeof(remote_host)); }
   if(!first) json_buf_append(&buf,&len,&cap,",");
   first=0;
       json_buf_append(&buf,&len,&cap,"{\"intf\":\"\",\"local\":"); json_append_escaped(&buf,&len,&cap,local);
@@ -2138,8 +2148,15 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
 
         if (max_fd < 0 || active_sockets == 0) break; /* No valid sockets */
 
-        struct timeval timeout = {0, 10000}; /* 10ms timeout */
-        int ready = select(max_fd + 1, &readfds, NULL, NULL, &timeout);
+  /* Compute remaining time in the probe window and use a larger, adaptive
+   * select timeout to avoid busy-waiting. Cap sleep to 100ms so discovery
+   * remains reasonably responsive while reducing CPU. */
+  int rem_ms = (int)(g_ubnt_probe_window_ms - elapsed_ms);
+  if (rem_ms <= 0) break;
+  int cap_ms = g_ubnt_select_timeout_cap_ms > 0 ? g_ubnt_select_timeout_cap_ms : 100;
+  int to_ms = rem_ms < cap_ms ? rem_ms : cap_ms; /* cap to configured value */
+  struct timeval timeout = { (to_ms / 1000), (to_ms % 1000) * 1000 };
+  int ready = select(max_fd + 1, &readfds, NULL, NULL, &timeout);
         if (ready > 0) {
           /* Process responses from ready sockets */
           for (int i = 0; i < iface_count; i++) {
@@ -2267,8 +2284,8 @@ static int ubnt_discover_output(char **out, size_t *outlen) {
             }
           }
         }
-        /* Brief pause to prevent busy waiting, but much shorter than before */
-        usleep(1000);
+  /* No extra usleep here: select now uses an adaptive timeout which
+   * prevents busy waiting while keeping discovery responsive. */
       }
 
       /* Close all sockets */
@@ -3511,9 +3528,10 @@ static int h_status_lite(http_request_t *r) {
 
   if (def_ip[0]) {
     struct in_addr ina;
-    if (inet_aton(def_ip, &ina)) {
+      if (inet_aton(def_ip, &ina)) {
       char _rhost[NI_MAXHOST]; _rhost[0] = '\0';
-      if (resolve_ip_to_hostname(def_ip, _rhost, sizeof(_rhost)) == 0) {
+      lookup_hostname_cached(def_ip, _rhost, sizeof(_rhost));
+      if (_rhost[0]) {
         snprintf(def_hostname, sizeof(def_hostname), "%.*s", (int)(sizeof(def_hostname) - 1), _rhost);
         def_hostname[sizeof(def_hostname) - 1] = '\0';
       }
@@ -5182,7 +5200,8 @@ static int h_traceroute(http_request_t *r) {
         /* hops[i].host and hops[i].ip are fixed-size arrays; check contents, not pointer value */
         if (hops[i].host[0] == '\0' && hops[i].ip[0] != '\0') {
           char resolved[256] = "";
-          if (resolve_ip_to_hostname(hops[i].ip, resolved, sizeof(resolved)) == 0) {
+          lookup_hostname_cached(hops[i].ip, resolved, sizeof(resolved));
+          if (resolved[0]) {
             /* limit copy to host buffer size to avoid truncation warnings */
             snprintf(hops[i].host, sizeof(hops[i].host), "%.*s", (int)sizeof(hops[i].host) - 1, resolved);
           }
@@ -5465,6 +5484,7 @@ static int set_int_param(const char *value, void *data, set_plugin_parameter_add
   if (data == &g_log_request_debug) g_cfg_log_request_debug_set = 1;
   if (data == &g_log_buf_lines) g_cfg_log_buf_lines_set = 1;
   if (data == &g_status_lite_ttl_s) g_cfg_status_lite_ttl_s_set = 1;
+  if (data == &g_ubnt_select_timeout_cap_ms) g_cfg_ubnt_select_timeout_cap_ms_set = 1;
   return 0;
 }
 
@@ -5512,6 +5532,7 @@ static const struct olsrd_plugin_parameters g_params[] = {
   /* discovery tuning */
   { .name = "discover_interval", .set_plugin_parameter = &set_int_param, .data = &g_devices_discover_interval, .addon = {0} },
   { .name = "ubnt_probe_window_ms", .set_plugin_parameter = &set_int_param, .data = &g_ubnt_probe_window_ms, .addon = {0} },
+  { .name = "ubnt_select_timeout_cap_ms", .set_plugin_parameter = &set_int_param, .data = &g_ubnt_select_timeout_cap_ms, .addon = {0} },
   { .name = "ubnt_cache_ttl_s", .set_plugin_parameter = &set_int_param, .data = &g_ubnt_cache_ttl_s, .addon = {0} },
   { .name = "arp_cache_ttl_s", .set_plugin_parameter = &set_int_param, .data = &g_arp_cache_ttl_s, .addon = {0} },
   /* TTL for lightweight /status/lite cache (seconds) */
@@ -5761,6 +5782,17 @@ int olsrd_plugin_init(void) {
         } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_UBNT_PROBE_WINDOW_MS value: %s (ignored)\n", env_pw);
       }
     }
+      /* ubnt select timeout cap override (milliseconds) */
+      if (!g_cfg_ubnt_select_timeout_cap_ms_set) {
+        const char *env_st = getenv("OLSRD_STATUS_UBNT_SELECT_TIMEOUT_CAP_MS");
+        if (env_st && env_st[0]) {
+          char *endptr = NULL; long v = strtol(env_st, &endptr, 10);
+          if (endptr && *endptr == '\0' && v >= 1 && v <= 10000) {
+            g_ubnt_select_timeout_cap_ms = (int)v;
+            fprintf(stderr, "[status-plugin] setting ubnt select timeout cap from env: %d ms\n", g_ubnt_select_timeout_cap_ms);
+          } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_UBNT_SELECT_TIMEOUT_CAP_MS value: %s (ignored)\n", env_st);
+        }
+      }
     /* ubnt discover cache TTL override (seconds) */
     if (!g_cfg_ubnt_cache_ttl_s_set) {
       const char *env_ct = getenv("OLSRD_STATUS_UBNT_CACHE_TTL_S");

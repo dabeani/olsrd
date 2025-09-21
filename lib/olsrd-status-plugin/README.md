@@ -279,6 +279,12 @@ export OLSRD_STATUS_DISCOVER_INTERVAL=300
 ```bash
 ```
 
+* `OLSRD_STATUS_UBNT_SELECT_TIMEOUT_CAP_MS` / PlParam `ubnt_select_timeout_cap_ms` – cap (milliseconds) applied to the select() timeout used during UBNT discovery socket waits. This limits per-iteration sleep to avoid long blocking when adaptive timeouts are calculated; useful to reduce worst-case latency in discovery loops. Default: 100 ms. Valid range: 1 - 10000.
+
+```bash
+export OLSRD_STATUS_UBNT_SELECT_TIMEOUT_CAP_MS=200
+```
+
 Example `olsrd.conf` plugin block (pasteable):
 
 ```
@@ -289,6 +295,20 @@ LoadPlugin "lib/olsrd-status-plugin/build/olsrd_status.so.1.0"
     # Discovery tuning (PlParam wins over environment variables)
     PlParam "discover_interval" "300"            # seconds
     PlParam "ubnt_probe_window_ms" "1000"       # milliseconds
+}
+
+# Example: tune the UBNT discovery select timeout cap
+# You can set the cap (in milliseconds) so the discovery loop will not block
+# longer than this value on select() calls. PlParam in olsrd.conf takes
+# precedence over the environment variable.
+LoadPlugin "lib/olsrd-status-plugin/build/olsrd_status.so.1.0"
+{
+    PlParam "port" "11080"
+    PlParam "assetroot" "/usr/share/olsrd-status-plugin/www"
+    PlParam "discover_interval" "300"
+    PlParam "ubnt_probe_window_ms" "1000"
+    # Set select timeout cap to 200ms (valid range: 1-10000)
+    PlParam "ubnt_select_timeout_cap_ms" "200"
 }
 ```
 
