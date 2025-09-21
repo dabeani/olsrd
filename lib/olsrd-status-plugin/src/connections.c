@@ -84,7 +84,8 @@ static int read_sysfs_mac(const char *ifname, char *out, size_t outlen) {
   char *nl = strchr(buf, '\n'); if (nl) *nl = '\0';
   /* uppercase */
   for (char *p = buf; *p; ++p) *p = toupper((unsigned char)*p);
-  snprintf(out, outlen, "%s", buf);
+  /* copy up to outlen-1 chars to ensure null termination; use precision to satisfy -Wformat-truncation */
+  if (outlen > 0) snprintf(out, outlen, "%.*s", (int)(outlen - 1), buf);
   return 1;
 }
 
@@ -249,7 +250,7 @@ int render_connections_json(char **buf_out, size_t *len_out){
           }
           if (ip_count == 0) {
             char ipbufs[64][64]; int got = collect_ifaddrs_ipv4(ports[p], ipbufs, 64);
-            for (int ii=0; ii<got && ip_count < 64; ii++) { snprintf(ips[ip_count], sizeof(ips[0]), "%s", ipbufs[ii]); ip_count++; }
+            for (int ii=0; ii<got && ip_count < 64; ii++) { snprintf(ips[ip_count], sizeof(ips[0]), "%.*s", (int)(sizeof(ips[0]) - 1), ipbufs[ii]); ip_count++; }
           }
           if (!first_port) JAPPEND(",");
           JAPPEND("{\"port\":\"%s\",\"bridge\":\"%s\",\"macs\":[", ports[p], bridges[i]);
