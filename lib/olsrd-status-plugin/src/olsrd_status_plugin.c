@@ -3455,52 +3455,47 @@ static int h_status(http_request_t *r) {
   if(olsrd_on) fprintf(stderr,"[status-plugin] detected olsrd (robust)\n");
   if(!olsrd_on && !olsr2_on) fprintf(stderr,"[status-plugin] no OLSR process detected (robust path)\n");
 
-  /* fetch links (for either implementation); do not toggle olsr2_on based on HTTP success */
-  char *olsr_links_raw=NULL; size_t oln=0; char selected_olsr_ep[256] = ""; {
-    const char *endpoints[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
-    for(const char **ep=endpoints; *ep && !olsr_links_raw; ++ep){
-      fprintf(stderr,"[status-plugin] trying OLSR endpoint: %s\n", *ep);
-      if (strstr(*ep, "127.0.0.1") || strstr(*ep, "localhost")) {
-        if (util_http_get_url_local(*ep, &olsr_links_raw, &oln, 1) == 0 && olsr_links_raw && oln > 0) {
-          fprintf(stderr,"[status-plugin] fetched OLSR links from %s (%zu bytes)\n", *ep, oln);
-          /* remember which endpoint succeeded so we can query routes/topology on the same base */
-          snprintf(selected_olsr_ep, sizeof(selected_olsr_ep), "%s", *ep);
-          break;
-        }
-      } else {
-        char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep);
-        if(util_exec(cmd,&olsr_links_raw,&oln)==0 && olsr_links_raw && oln>0){
-          fprintf(stderr,"[status-plugin] fetched OLSR links from %s (%zu bytes)\n", *ep, oln);
-          snprintf(selected_olsr_ep, sizeof(selected_olsr_ep), "%s", *ep);
-          break;
-        }
+  /* fetch links: prefer direct in-memory collectors to avoid local HTTP probes */
+  char *olsr_links_raw = NULL; size_t oln = 0; char selected_olsr_ep[256] = "";
+  {
+    struct autobuf nab;
+    if (abuf_init(&nab, 4096) == 0) {
+      status_collect_links(&nab);
+      if (nab.len > 0) {
+        olsr_links_raw = malloc(nab.len + 1);
+        if (olsr_links_raw) { memcpy(olsr_links_raw, nab.buf, nab.len); olsr_links_raw[nab.len] = '\0'; oln = nab.len; }
       }
-      if(olsr_links_raw){ free(olsr_links_raw); olsr_links_raw=NULL; oln=0; }
+      abuf_free(&nab);
+    }
+    /* fallback: attempt local HTTP endpoints only if collector produced no data and external endpoints exist */
+    if (!olsr_links_raw) {
+      const char *endpoints[] = {"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
+      for (const char **ep = endpoints; *ep && !olsr_links_raw; ++ep) {
+        if (util_http_get_url_local(*ep, &olsr_links_raw, &oln, 1) == 0 && olsr_links_raw && oln > 0) {
+          snprintf(selected_olsr_ep, sizeof(selected_olsr_ep), "%s", *ep);
+          break;
+        }
+        if (olsr_links_raw) { free(olsr_links_raw); olsr_links_raw = NULL; oln = 0; }
+      }
     }
   }
 
-  char *olsr_neighbors_raw=NULL; size_t olnn=0;
-  /* Prefer in-memory neighbors collector; if not present and a non-local endpoint was chosen
-   * attempt to fetch from the selected external base. Only fall back to telnet bridge (8000)
-   * for olsrd2 when the collector produced no data.
-   */
-  if (selected_olsr_ep[0]) {
-    /* if selected endpoint is non-local, attempt to fetch neighbors from it */
-    if (!(strstr(selected_olsr_ep, "127.0.0.1") || strstr(selected_olsr_ep, "localhost"))) {
-      char base[256] = ""; const char *u = selected_olsr_ep; const char *p = strstr(u, "://"); if (p) p += 3; else p = u; const char *slash = strchr(p, '/'); size_t baselen = slash ? (size_t)(slash - u) : strlen(u); if (baselen >= sizeof(base)) baselen = sizeof(base)-1; memcpy(base, u, baselen); base[baselen] = '\0';
-      char nb[320]; snprintf(nb, sizeof(nb), "%s/neighbors", base);
-      if (util_http_get_url_local(nb, &olsr_neighbors_raw, &olnn, 1) != 0) { if(olsr_neighbors_raw){ free(olsr_neighbors_raw); olsr_neighbors_raw=NULL; } olnn=0; }
-    }
-  }
-  /* In-memory collector as primary source for neighbors */
-  if (!olsr_neighbors_raw) {
-    struct autobuf nab; if (abuf_init(&nab, 2048) == 0) {
+  char *olsr_neighbors_raw = NULL; size_t olnn = 0;
+  /* Use in-memory neighbors collector primarily; fall back to selected external endpoint only if collector empty */
+  {
+    struct autobuf nab;
+    if (abuf_init(&nab, 2048) == 0) {
       status_collect_neighbors(&nab);
       if (nab.len > 0) {
         olsr_neighbors_raw = malloc(nab.len + 1);
         if (olsr_neighbors_raw) { memcpy(olsr_neighbors_raw, nab.buf, nab.len); olsr_neighbors_raw[nab.len] = '\0'; olnn = nab.len; }
       }
       abuf_free(&nab);
+    }
+    if (!olsr_neighbors_raw && selected_olsr_ep[0] && !(strstr(selected_olsr_ep, "127.0.0.1") || strstr(selected_olsr_ep, "localhost"))) {
+      char base[256] = ""; const char *u = selected_olsr_ep; const char *p = strstr(u, "://"); if (p) p += 3; else p = u; const char *slash = strchr(p, '/'); size_t baselen = slash ? (size_t)(slash - u) : strlen(u); if (baselen >= sizeof(base)) baselen = sizeof(base)-1; memcpy(base, u, baselen); base[baselen] = '\0';
+      char nb[320]; snprintf(nb, sizeof(nb), "%s/neighbors", base);
+      if (util_http_get_url_local(nb, &olsr_neighbors_raw, &olnn, 1) != 0) { if(olsr_neighbors_raw){ free(olsr_neighbors_raw); olsr_neighbors_raw=NULL; } olnn=0; }
     }
   }
   /* If olsrd2 is running and the default neighbor endpoint returned nothing,
@@ -3522,20 +3517,11 @@ static int h_status(http_request_t *r) {
       } else { if (tmp) { fprintf(stderr, "[status-plugin] telnet nhdpinfo neighbor failed or empty\n"); free(tmp); tmp = NULL; tlen = 0; } }
     }
   }
-  char *olsr_routes_raw=NULL; size_t olr=0; char *olsr_topology_raw=NULL; size_t olt=0;
-  /* Try fetching routes/topology from same base as links (if known), otherwise fall back to 127.0.0.1:9090 */
-  /* Prefer in-memory collectors for routes/topology. If a non-local endpoint was selected earlier
-   * attempt to fetch from that base as a fallback for external endpoints.
-   */
-  if (selected_olsr_ep[0] && !(strstr(selected_olsr_ep, "127.0.0.1") || strstr(selected_olsr_ep, "localhost"))) {
-    char base[256] = ""; const char *u = selected_olsr_ep; const char *p = strstr(u, "://"); if (p) p += 3; else p = u; const char *slash = strchr(p, '/'); size_t baselen = slash ? (size_t)(slash - u) : strlen(u); if (baselen >= sizeof(base)) baselen = sizeof(base)-1; memcpy(base, u, baselen); base[baselen] = '\0';
-    char rb[320]; snprintf(rb, sizeof(rb), "%s/routes", base);
-    char tb[320]; snprintf(tb, sizeof(tb), "%s/topology", base);
-    if (util_http_get_url_local(rb, &olsr_routes_raw, &olr, 1) != 0) { if(olsr_routes_raw){ free(olsr_routes_raw); olsr_routes_raw=NULL; } olr=0; }
-    if (util_http_get_url_local(tb, &olsr_topology_raw, &olt, 1) != 0) { if(olsr_topology_raw){ free(olsr_topology_raw); olsr_topology_raw=NULL; } olt=0; }
-  }
-  if (!olsr_routes_raw) {
-    struct autobuf rab; if (abuf_init(&rab, 4096) == 0) {
+  /* Prefer in-memory collectors for routes/topology, fallback to selected external endpoint only if needed */
+  char *olsr_routes_raw = NULL; size_t olr = 0; char *olsr_topology_raw = NULL; size_t olt = 0;
+  {
+    struct autobuf rab;
+    if (abuf_init(&rab, 4096) == 0) {
       status_collect_routes(&rab);
       if (rab.len > 0) {
         olsr_routes_raw = malloc(rab.len + 1);
@@ -3543,15 +3529,21 @@ static int h_status(http_request_t *r) {
       }
       abuf_free(&rab);
     }
-  }
-  if (!olsr_topology_raw) {
-    struct autobuf tab; if (abuf_init(&tab, 4096) == 0) {
+    struct autobuf tab;
+    if (abuf_init(&tab, 4096) == 0) {
       status_collect_topology(&tab);
       if (tab.len > 0) {
         olsr_topology_raw = malloc(tab.len + 1);
         if (olsr_topology_raw) { memcpy(olsr_topology_raw, tab.buf, tab.len); olsr_topology_raw[tab.len] = '\0'; olt = tab.len; }
       }
       abuf_free(&tab);
+    }
+    if ((!olsr_routes_raw || !olsr_topology_raw) && selected_olsr_ep[0] && !(strstr(selected_olsr_ep, "127.0.0.1") || strstr(selected_olsr_ep, "localhost"))) {
+      char base[256] = ""; const char *u = selected_olsr_ep; const char *p = strstr(u, "://"); if (p) p += 3; else p = u; const char *slash = strchr(p, '/'); size_t baselen = slash ? (size_t)(slash - u) : strlen(u); if (baselen >= sizeof(base)) baselen = sizeof(base)-1; memcpy(base, u, baselen); base[baselen] = '\0';
+      char rb[320]; snprintf(rb, sizeof(rb), "%s/routes", base);
+      char tb[320]; snprintf(tb, sizeof(tb), "%s/topology", base);
+      if (!olsr_routes_raw) { if (util_http_get_url_local(rb, &olsr_routes_raw, &olr, 1) != 0) { if (olsr_routes_raw) { free(olsr_routes_raw); olsr_routes_raw = NULL; } olr = 0; } }
+      if (!olsr_topology_raw) { if (util_http_get_url_local(tb, &olsr_topology_raw, &olt, 1) != 0) { if (olsr_topology_raw) { free(olsr_topology_raw); olsr_topology_raw = NULL; } olt = 0; } }
     }
   }
 
