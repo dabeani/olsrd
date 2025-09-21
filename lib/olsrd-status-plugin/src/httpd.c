@@ -38,8 +38,13 @@ static int g_run = 0;
 static char g_asset_root[512] = {0};
 static http_handler_node_t *g_handlers = NULL;
 static pthread_mutex_t g_handlers_lock = PTHREAD_MUTEX_INITIALIZER;
-/* control whether per-request access logging is enabled (env OLSRD_STATUS_ACCESS_LOG=0 disables) */
-static int g_log_access = 1;
+/* control whether per-request access logging is enabled
+ * Access logging is disabled by default. To enable, set one of the
+ * environment variables to a non-zero value:
+ * - OLSRD_STATUS_FETCH_LOG_QUEUE (non-'0' enables)
+ * - OLSRD_STATUS_ACCESS_LOG (non-'0' enables)
+ */
+static int g_log_access = 0;
 /* simple allow-list storage */
 typedef struct cidr_entry {
   struct in6_addr addr;
@@ -382,13 +387,13 @@ int http_send_file(http_request_t *r, const char *asset_root, const char *relpat
   snprintf(path, sizeof(path), "%s/%s", asset_root, relpath);
   int fd = open(path, O_RDONLY);
   if (fd < 0) {
-  fprintf(stderr, "[status-plugin] http_send_file: open('%s') failed: %s (errno=%d)\n", path, strerror(errno), errno);
+  if (g_log_request_debug) fprintf(stderr, "[status-plugin] http_send_file: open('%s') failed: %s (errno=%d)\n", path, strerror(errno), errno);
   http_send_status(r, 404, "Not Found");
   http_printf(r, "Content-Type: text/plain\r\n\r\nnot found\n");
   return -1;
   }
   const char *m = mime ? mime : guess_mime(relpath);
-  if (g_log_access) fprintf(stderr, "[status-plugin] http_send_file: serving '%s' (mime=%s)\n", path, m);
+  if (g_log_request_debug) fprintf(stderr, "[status-plugin] http_send_file: serving '%s' (mime=%s)\n", path, m);
   struct stat st;
   if (fstat(fd, &st) == 0) {
     /* Generate Last-Modified header */
@@ -623,7 +628,7 @@ static void *connection_worker(void *arg) {
   }
   if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: handler dispatch completed, checked %d handlers, handled=%d\n", handler_count, handled); fflush(stderr); }
   if (!handled) {
-    if (g_log_access) fprintf(stderr, "[httpd] 404 Not Found: %s\n", r->path);
+    if (g_log_request_debug) fprintf(stderr, "[httpd] 404 Not Found: %s\n", r->path);
     http_send_status(r, 404, "Not Found");
     http_printf(r, "Content-Type: text/plain\r\n\r\nnot found: %s\n", r->path);
   }
@@ -793,16 +798,18 @@ int http_server_start(const char *bind_ip, int port, const char *asset_root) {
   if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: http_server_start called with bind_ip='%s', port=%d, asset_root='%s', current g_handlers=%p\n", 
     bind_ip ? bind_ip : "NULL", port, asset_root ? asset_root : "NULL", (void*)g_handlers); fflush(stderr); }
   if (asset_root) snprintf(g_asset_root, sizeof(g_asset_root), "%s", asset_root);
-  /* Respect new env var OLSRD_STATUS_FETCH_LOG_QUEUE to silence fetch/request access logs
-   * If not present, fall back to the older OLSRD_STATUS_ACCESS_LOG for compatibility.
-   * Values: '0' disables access logging; any other value (or unset) enables it.
+  /* Access logging is disabled by default. Enable it by setting
+   * OLSRD_STATUS_FETCH_LOG_QUEUE=1 (preferred) or OLSRD_STATUS_ACCESS_LOG=1
+   * for backward compatibility. Setting either variable to '0' explicitly
+   * disables access logging.
    */
   const char *fl = getenv("OLSRD_STATUS_FETCH_LOG_QUEUE");
-  if (fl && fl[0] == '0') {
-    g_log_access = 0;
+  if (fl) {
+    /* explicit value present: '0' -> disable, anything else -> enable */
+    g_log_access = (fl[0] == '0') ? 0 : 1;
   } else {
     const char *alog = getenv("OLSRD_STATUS_ACCESS_LOG");
-    if (alog && alog[0] == '0') g_log_access = 0; else g_log_access = 1;
+    if (alog) g_log_access = (alog[0] == '0') ? 0 : 1; else g_log_access = 0;
   }
   int fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) return -1;
