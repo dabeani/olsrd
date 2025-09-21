@@ -144,6 +144,7 @@ static int g_cfg_assetroot_set = 0;
 static int g_cfg_coalesce_devices_ttl_set = 0;
 static int g_cfg_coalesce_discover_ttl_set = 0;
 static int g_cfg_coalesce_traceroute_ttl_set = 0;
+static int g_cfg_coalesce_links_ttl_set = 0;
 static int g_cfg_net_count = 0;
 /* track fetch tuning PlParam presence */
 static int g_cfg_fetch_queue_set = 0;
@@ -471,10 +472,12 @@ static void endpoint_coalesce_finish(endpoint_coalesce_t *e, char *newbuf, size_
 static endpoint_coalesce_t g_traceroute_co;
 static endpoint_coalesce_t g_discover_co;
 static endpoint_coalesce_t g_devices_co;
+static endpoint_coalesce_t g_links_co;
 /* Coalescer TTLs (seconds) - defaults mirror previous hardcoded values */
 static int g_coalesce_devices_ttl = 5;
 static int g_coalesce_discover_ttl = 300;
 static int g_coalesce_traceroute_ttl = 5;
+static int g_coalesce_links_ttl = 10;
 /* configuration-set flags intentionally omitted: coalescer TTLs accept env/PlParam but do not track PlParam precedence here */
 /* --- end coalescing helper --- */
 
@@ -4609,6 +4612,59 @@ done:
   return 0;
 }
 
+/* /status/links_live - serve links JSON with short coalescing (10s TTL)
+ * This endpoint is intended to be polled frequently by the UI for near-live
+ * link updates without forcing the collector to run on every request.
+ */
+static int h_status_links_live(http_request_t *r) {
+  char *cached = NULL; size_t cached_len = 0;
+  /* try to serve cached snapshot if fresh */
+  if (endpoint_coalesce_try_start(&g_links_co, &cached, &cached_len)) {
+    if (cached) {
+      http_send_status(r, 200, "OK");
+      http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+      http_write(r, cached, cached_len);
+      free(cached);
+      return 0;
+    }
+    /* else: we are the in-flight worker and should build fresh */
+  }
+
+  /* Build fresh links JSON using in-memory collector */
+  char *links_raw = NULL; size_t links_len = 0;
+  {
+    struct autobuf ab; if (abuf_init(&ab, 4096) == 0) {
+      status_collect_links(&ab);
+      if (ab.len > 0) {
+        links_raw = malloc(ab.len + 1);
+        if (links_raw) { memcpy(links_raw, ab.buf, ab.len); links_raw[ab.len] = '\0'; links_len = ab.len; }
+      }
+      abuf_free(&ab);
+    }
+  }
+
+  if (!links_raw || links_len == 0) {
+    /* Nothing to serve */
+    endpoint_coalesce_finish(&g_links_co, NULL, 0);
+    send_json(r, "[]\n");
+    return 0;
+  }
+
+  /* Prepare a cache copy for coalescer and send response */
+  char *cache_copy = malloc(links_len + 1);
+  if (cache_copy) { memcpy(cache_copy, links_raw, links_len); cache_copy[links_len] = '\0'; }
+  http_send_status(r, 200, "OK");
+  http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+  http_write(r, links_raw, links_len);
+
+  /* hand ownership of cache copy to coalescer */
+  if (cache_copy) endpoint_coalesce_finish(&g_links_co, cache_copy, links_len);
+  else endpoint_coalesce_finish(&g_links_co, NULL, 0);
+
+  free(links_raw);
+  return 0;
+}
+
 /* Debug endpoint: expose per-neighbor unique destination list to verify node counting */
 static int h_olsr_links_debug(http_request_t *r) {
   send_json(r, "{\"error\":\"debug disabled pending fix\"}\n");
@@ -5238,7 +5294,7 @@ static int h_diagnostics_json(http_request_t *r) {
 
     if (json_appendf(&out, &outlen, &outcap, "\"arp\":{\"arp_cache_len\":%d,\"arp_cache_ts\":%d,\"arp_cache_ttl_s\":%d},", g_arp_cache_len, (int)g_arp_cache_ts, g_arp_cache_ttl_s) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
 
-    if (json_appendf(&out, &outlen, &outcap, "\"coalesce\":{\"devices_ttl\":%d,\"discover_ttl\":%d,\"traceroute_ttl\":%d},", g_coalesce_devices_ttl, g_coalesce_discover_ttl, g_coalesce_traceroute_ttl) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  if (json_appendf(&out, &outlen, &outcap, "\"coalesce\":{\"devices_ttl\":%d,\"discover_ttl\":%d,\"traceroute_ttl\":%d,\"links_ttl\":%d},", g_coalesce_devices_ttl, g_coalesce_discover_ttl, g_coalesce_traceroute_ttl, g_coalesce_links_ttl) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
 
     if (json_appendf(&out, &outlen, &outcap, "\"debug\":{\"log_request_debug\":%d,\"last_fetch_msg\":\"%s\"}", g_log_request_debug, g_debug_last_fetch_msg) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
   }
@@ -5657,6 +5713,7 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "coalesce_devices_ttl", .set_plugin_parameter = &set_int_param, .data = &g_coalesce_devices_ttl, .addon = {0} },
   { .name = "coalesce_discover_ttl", .set_plugin_parameter = &set_int_param, .data = &g_coalesce_discover_ttl, .addon = {0} },
   { .name = "coalesce_traceroute_ttl", .set_plugin_parameter = &set_int_param, .data = &g_coalesce_traceroute_ttl, .addon = {0} },
+  { .name = "coalesce_links_ttl", .set_plugin_parameter = &set_int_param, .data = &g_coalesce_links_ttl, .addon = {0} },
   /* UI thresholds exported for front-end convenience */
   { .name = "fetch_queue_warn", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_warn, .addon = {0} },
   { .name = "fetch_queue_crit", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_crit, .addon = {0} },
@@ -6060,6 +6117,16 @@ int olsrd_plugin_init(void) {
       } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_COALESCE_TRACEROUTE_TTL value: %s (ignored)\n", env_ctt);
     }
   }
+  if (!g_cfg_coalesce_links_ttl_set) {
+    const char *env_clt = getenv("OLSRD_STATUS_COALESCE_LINKS_TTL");
+    if (env_clt && env_clt[0]) {
+      char *endptr = NULL; long v = strtol(env_clt, &endptr, 10);
+      if (endptr && *endptr == '\0' && v >= 0 && v <= 600) {
+        g_coalesce_links_ttl = (int)v;
+        fprintf(stderr, "[status-plugin] setting coalesce_links_ttl from env: %d\n", g_coalesce_links_ttl);
+      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_COALESCE_LINKS_TTL value: %s (ignored)\n", env_clt);
+    }
+  }
 
   /* Start periodic reporter if requested */
   if (g_fetch_report_interval > 0) {
@@ -6124,6 +6191,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/status/traceroute", &h_status_traceroute);
   http_server_register_handler("/olsr/links", &h_olsr_links);
   http_server_register_handler("/olsr/links_debug", &h_olsr_links_debug);
+  http_server_register_handler("/status/links_live", &h_status_links_live);
   http_server_register_handler("/olsr/routes", &h_olsr_routes);
   http_server_register_handler("/olsr/raw", &h_olsr_raw); /* debug */
   http_server_register_handler("/olsrd.json", &h_olsrd_json);
@@ -6157,6 +6225,7 @@ int olsrd_plugin_init(void) {
   endpoint_coalesce_init(&g_traceroute_co, g_coalesce_traceroute_ttl);
   endpoint_coalesce_init(&g_discover_co, g_coalesce_discover_ttl);
   endpoint_coalesce_init(&g_devices_co, g_coalesce_devices_ttl);
+  endpoint_coalesce_init(&g_links_co, g_coalesce_links_ttl);
   start_devices_worker();
   /* start node DB background worker */
   start_nodedb_worker();
