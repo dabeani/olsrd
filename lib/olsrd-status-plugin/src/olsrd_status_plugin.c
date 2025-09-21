@@ -3056,14 +3056,29 @@ static int h_status(http_request_t *r) {
   /* (legacy duplicate fetch block removed after refactor) */
 
   char *olsr_neighbors_raw=NULL; size_t olnn=0;
-  /* Prefer neighbors endpoint on the same base that served links earlier; fall back to 127.0.0.1:9090 */
+  /* Prefer in-memory neighbors collector; if not present and a non-local endpoint was chosen
+   * attempt to fetch from the selected external base. Only fall back to telnet bridge (8000)
+   * for olsrd2 when the collector produced no data.
+   */
   if (selected_olsr_ep[0]) {
-    /* build base (scheme://host:port) from selected_olsr_ep */
-    char base[256] = ""; const char *u = selected_olsr_ep; const char *p = strstr(u, "://"); if (p) p += 3; else p = u; const char *slash = strchr(p, '/'); size_t baselen = slash ? (size_t)(slash - u) : strlen(u); if (baselen >= sizeof(base)) baselen = sizeof(base)-1; memcpy(base, u, baselen); base[baselen] = '\0';
-    char nb[320]; snprintf(nb, sizeof(nb), "%s/neighbors", base);
-    if (util_http_get_url_local(nb, &olsr_neighbors_raw, &olnn, 1) != 0) { if(olsr_neighbors_raw){ free(olsr_neighbors_raw); olsr_neighbors_raw=NULL; } olnn=0; }
+    /* if selected endpoint is non-local, attempt to fetch neighbors from it */
+    if (!(strstr(selected_olsr_ep, "127.0.0.1") || strstr(selected_olsr_ep, "localhost"))) {
+      char base[256] = ""; const char *u = selected_olsr_ep; const char *p = strstr(u, "://"); if (p) p += 3; else p = u; const char *slash = strchr(p, '/'); size_t baselen = slash ? (size_t)(slash - u) : strlen(u); if (baselen >= sizeof(base)) baselen = sizeof(base)-1; memcpy(base, u, baselen); base[baselen] = '\0';
+      char nb[320]; snprintf(nb, sizeof(nb), "%s/neighbors", base);
+      if (util_http_get_url_local(nb, &olsr_neighbors_raw, &olnn, 1) != 0) { if(olsr_neighbors_raw){ free(olsr_neighbors_raw); olsr_neighbors_raw=NULL; } olnn=0; }
+    }
   }
-  if (!olsr_neighbors_raw && util_http_get_url_local("http://127.0.0.1:9090/neighbors", &olsr_neighbors_raw, &olnn, 1) != 0) { if(olsr_neighbors_raw){ free(olsr_neighbors_raw); olsr_neighbors_raw=NULL; } olnn=0; }
+  /* In-memory collector as primary source for neighbors */
+  if (!olsr_neighbors_raw) {
+    struct autobuf nab; if (abuf_init(&nab, 2048) == 0) {
+      status_collect_neighbors(&nab);
+      if (nab.len > 0) {
+        olsr_neighbors_raw = malloc(nab.len + 1);
+        if (olsr_neighbors_raw) { memcpy(olsr_neighbors_raw, nab.buf, nab.len); olsr_neighbors_raw[nab.len] = '\0'; olnn = nab.len; }
+      }
+      abuf_free(&nab);
+    }
+  }
   /* If olsrd2 is running and the default neighbor endpoint returned nothing,
    * try the telnet bridge endpoints that some olsrd2 builds expose (used by
    * bmk-webstatus.py). Prefer JSON output when available.
@@ -3085,15 +3100,36 @@ static int h_status(http_request_t *r) {
   }
   char *olsr_routes_raw=NULL; size_t olr=0; char *olsr_topology_raw=NULL; size_t olt=0;
   /* Try fetching routes/topology from same base as links (if known), otherwise fall back to 127.0.0.1:9090 */
-  if (selected_olsr_ep[0]) {
+  /* Prefer in-memory collectors for routes/topology. If a non-local endpoint was selected earlier
+   * attempt to fetch from that base as a fallback for external endpoints.
+   */
+  if (selected_olsr_ep[0] && !(strstr(selected_olsr_ep, "127.0.0.1") || strstr(selected_olsr_ep, "localhost"))) {
     char base[256] = ""; const char *u = selected_olsr_ep; const char *p = strstr(u, "://"); if (p) p += 3; else p = u; const char *slash = strchr(p, '/'); size_t baselen = slash ? (size_t)(slash - u) : strlen(u); if (baselen >= sizeof(base)) baselen = sizeof(base)-1; memcpy(base, u, baselen); base[baselen] = '\0';
     char rb[320]; snprintf(rb, sizeof(rb), "%s/routes", base);
     char tb[320]; snprintf(tb, sizeof(tb), "%s/topology", base);
     if (util_http_get_url_local(rb, &olsr_routes_raw, &olr, 1) != 0) { if(olsr_routes_raw){ free(olsr_routes_raw); olsr_routes_raw=NULL; } olr=0; }
     if (util_http_get_url_local(tb, &olsr_topology_raw, &olt, 1) != 0) { if(olsr_topology_raw){ free(olsr_topology_raw); olsr_topology_raw=NULL; } olt=0; }
   }
-  if (!olsr_routes_raw) { if(util_http_get_url_local("http://127.0.0.1:9090/routes", &olsr_routes_raw, &olr, 1) != 0) { if(olsr_routes_raw){ free(olsr_routes_raw); olsr_routes_raw=NULL; } olr=0; } }
-  if (!olsr_topology_raw) { if(util_http_get_url_local("http://127.0.0.1:9090/topology", &olsr_topology_raw, &olt, 1) != 0) { if(olsr_topology_raw){ free(olsr_topology_raw); olsr_topology_raw=NULL; } olt=0; } }
+  if (!olsr_routes_raw) {
+    struct autobuf rab; if (abuf_init(&rab, 4096) == 0) {
+      status_collect_routes(&rab);
+      if (rab.len > 0) {
+        olsr_routes_raw = malloc(rab.len + 1);
+        if (olsr_routes_raw) { memcpy(olsr_routes_raw, rab.buf, rab.len); olsr_routes_raw[rab.len] = '\0'; olr = rab.len; }
+      }
+      abuf_free(&rab);
+    }
+  }
+  if (!olsr_topology_raw) {
+    struct autobuf tab; if (abuf_init(&tab, 4096) == 0) {
+      status_collect_topology(&tab);
+      if (tab.len > 0) {
+        olsr_topology_raw = malloc(tab.len + 1);
+        if (olsr_topology_raw) { memcpy(olsr_topology_raw, tab.buf, tab.len); olsr_topology_raw[tab.len] = '\0'; olt = tab.len; }
+      }
+      abuf_free(&tab);
+    }
+  }
 
   /* Build JSON */
   APPEND("\"hostname\":"); json_append_escaped(&buf,&len,&cap,hostname); APPEND(",");
@@ -4400,10 +4436,19 @@ static int h_status_ping(http_request_t *r) {
 static int h_olsr_routes(http_request_t *r) {
   char via_ip[64]=""; get_query_param(r,"via", via_ip, sizeof(via_ip));
   int filter = via_ip[0] ? 1 : 0;
-  /* fetch routes JSON from possible endpoints */
-  char *raw=NULL; size_t rn=0; const char *eps[]={"http://127.0.0.1:9090/routes","http://127.0.0.1:2006/routes","http://127.0.0.1:8123/routes",NULL};
-  for(const char **ep=eps; *ep && !raw; ++ep){ if(util_http_get_url_local(*ep, &raw, &rn, 1)==0 && raw && rn>0) break; if(raw){ free(raw); raw=NULL; rn=0; } }
-  if(!raw){ send_json(r, "{\"via\":\"\",\"routes\":[]}\n"); return 0; }
+  /* fetch routes JSON from in-memory collectors (avoid local HTTP) */
+  char *raw = NULL;
+  {
+    struct autobuf ab; if (abuf_init(&ab, 4096) == 0) {
+      status_collect_routes(&ab);
+      if (ab.len > 0) {
+        raw = malloc(ab.len + 1);
+  if (raw) { memcpy(raw, ab.buf, ab.len); raw[ab.len] = '\0'; }
+      }
+      abuf_free(&ab);
+    }
+  }
+  if (!raw) { send_json(r, "{\"via\":\"\",\"routes\":[]}\n"); return 0; }
   char *out=NULL; size_t cap=4096,len=0; out=malloc(cap); if(!out){ free(raw); send_json(r,"{\"via\":\"\",\"routes\":[]}\n"); return 0;} out[0]=0;
   #define APP_R(fmt,...) do { if (json_appendf(&out, &len, &cap, fmt, ##__VA_ARGS__) != 0) { free(out); free(raw); send_json(r,"{\"via\":\"\",\"routes\":[]}\n"); return 0; } } while(0)
   APP_R("{\"via\":"); json_append_escaped(&out,&len,&cap, via_ip); APP_R(",\"routes\":["); int first=1; int count=0;
@@ -4443,12 +4488,30 @@ static int h_olsr_routes(http_request_t *r) {
 /* --- OLSR links endpoint with minimal neighbors --- */
 static int h_olsr_links(http_request_t *r) {
   int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
-  /* fetch links regardless of legacy vs v2 */
-  char *links_raw=NULL; size_t ln=0; {
-    const char *eps[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
-    for(const char **ep=eps; *ep && !links_raw; ++ep){ if(util_http_get_url_local(*ep, &links_raw, &ln, 1)==0 && links_raw && ln>0) break; if(links_raw){ free(links_raw); links_raw=NULL; ln=0; } }
+  /* fetch links (use in-memory collector) */
+  char *links_raw = NULL;
+  {
+    struct autobuf ab; if (abuf_init(&ab, 4096) == 0) {
+      status_collect_links(&ab);
+      if (ab.len > 0) {
+        links_raw = malloc(ab.len + 1);
+  if (links_raw) { memcpy(links_raw, ab.buf, ab.len); links_raw[ab.len] = '\0'; }
+      }
+      abuf_free(&ab);
+    }
   }
-  char *neighbors_raw=NULL; size_t nnr=0; util_http_get_url_local("http://127.0.0.1:9090/neighbors", &neighbors_raw,&nnr, 1);
+  /* neighbors: try in-memory collector first, fall back to telnet bridge (8000) if needed */
+  char *neighbors_raw = NULL; size_t nnr = 0;
+  {
+    struct autobuf ab; if (abuf_init(&ab, 2048) == 0) {
+      status_collect_neighbors(&ab);
+      if (ab.len > 0) {
+        neighbors_raw = malloc(ab.len + 1);
+        if (neighbors_raw) { memcpy(neighbors_raw, ab.buf, ab.len); neighbors_raw[ab.len] = '\0'; nnr = ab.len; }
+      }
+      abuf_free(&ab);
+    }
+  }
   /* Telnet bridge fallbacks for olsrd2 (nhdpinfo) */
   if (olsr2_on && (!neighbors_raw || nnr == 0)) {
     char *tmp = NULL; size_t tlen = 0;
@@ -4461,8 +4524,29 @@ static int h_olsr_links(http_request_t *r) {
       } else { if (tmp) { free(tmp); tmp = NULL; tlen = 0; } }
     }
   }
-  char *routes_raw=NULL; size_t rr=0; util_http_get_url_local("http://127.0.0.1:9090/routes", &routes_raw,&rr, 1);
-  char *topology_raw=NULL; size_t tr=0; util_http_get_url_local("http://127.0.0.1:9090/topology", &topology_raw,&tr, 1);
+  /* collect routes/topology via in-memory collectors */
+  char *routes_raw = NULL;
+  {
+    struct autobuf ab; if (abuf_init(&ab, 4096) == 0) {
+      status_collect_routes(&ab);
+      if (ab.len > 0) {
+        routes_raw = malloc(ab.len + 1);
+  if (routes_raw) { memcpy(routes_raw, ab.buf, ab.len); routes_raw[ab.len] = '\0'; }
+      }
+      abuf_free(&ab);
+    }
+  }
+  char *topology_raw = NULL;
+  {
+    struct autobuf ab; if (abuf_init(&ab, 4096) == 0) {
+      status_collect_topology(&ab);
+      if (ab.len > 0) {
+        topology_raw = malloc(ab.len + 1);
+  if (topology_raw) { memcpy(topology_raw, ab.buf, ab.len); topology_raw[ab.len] = '\0'; }
+      }
+      abuf_free(&ab);
+    }
+  }
   char *norm_links=NULL; size_t nlinks=0; {
     size_t l1 = links_raw?strlen(links_raw):0;
     size_t l2 = routes_raw?strlen(routes_raw):0;
