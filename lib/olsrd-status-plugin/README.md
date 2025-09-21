@@ -110,6 +110,14 @@ Note: ARP‑derived synthetic devices are intentionally excluded from `/devices.
 ## Debugging Aids
 Set `OLSR_DEBUG_LINK_COUNTS=1` before starting olsrd to emit stderr diagnostics when route/node fallbacks still yield zero.
 
+Controlling DEBUG output
+----------------------
+A few debug traces are gated and can be enabled at runtime:
+
+- Per-request HTTP debug: enable the plugin parameter `log_request_debug` in your `olsrd.conf` plugin block or set the environment variable `OLSRD_STATUS_LOG_REQUEST_DEBUG=1` (alias `OLSRD_LOG_REQ_DBG=1`) to emit concise per-request debug messages for supported endpoints. Default is `0` (off).
+- UBNT discovery debug: set `OLSRD_STATUS_UBNT_DEBUG=1` to enable runtime UBNT discovery tracing (socket, send/recv and TLV parsing). This matches the debug output of the standalone discovery CLI when run with `-d`.
+
+
 ## Build / Install
 Build:
 ```bash

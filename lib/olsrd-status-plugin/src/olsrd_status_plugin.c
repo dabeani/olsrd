@@ -3793,17 +3793,13 @@ static int h_status_lite(http_request_t *r) {
  * Response schema: { "devices": [ ... ], "airos": { ... } }
  */
 static int h_devices_json(http_request_t *r) {
-  fprintf(stderr, "[status-plugin] DEBUG: h_devices_json ENTRY - r=%p\n", (void*)r);
-  fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[status-plugin] DEBUG: h_devices_json ENTRY - r=%p\n", (void*)r); fflush(stderr); }
   if (!r) {
-    fprintf(stderr, "[status-plugin] DEBUG: h_devices_json called with NULL request\n");
-    fflush(stderr);
+    if (g_log_request_debug) { fprintf(stderr, "[status-plugin] DEBUG: h_devices_json called with NULL request\n"); fflush(stderr); }
     return 500;
   }
-  fprintf(stderr, "[status-plugin] DEBUG: h_devices_json r->path='%s' r->method='%s'\n", r->path[0] ? r->path : "NULL", r->method[0] ? r->method : "NULL");
-  fflush(stderr);
-  fprintf(stderr, "[status-plugin] h_devices_json called\n");
-  fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[status-plugin] DEBUG: h_devices_json r->path='%s' r->method='%s'\n", r->path[0] ? r->path : "NULL", r->method[0] ? r->method : "NULL"); fflush(stderr); }
+  if (g_log_request_debug) { fprintf(stderr, "[status-plugin] h_devices_json called\n"); fflush(stderr); }
   char *arp = NULL; size_t arpn = 0;
   char *udcopy = NULL; size_t udlen = 0;
   int have_ud = 0, have_arp = 0;
@@ -5529,8 +5525,7 @@ void olsrd_get_plugin_parameters(const struct olsrd_plugin_parameters **params, 
 }
 
 int olsrd_plugin_init(void) {
-  fprintf(stderr, "[status-plugin] DEBUG: olsrd_plugin_init called\n");
-  fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[status-plugin] DEBUG: olsrd_plugin_init called\n"); fflush(stderr); }
   log_asset_permissions();
   /* detect availability of optional external tools without failing startup */
   const char *tracer_candidates[] = { "/usr/sbin/traceroute", "/bin/traceroute", "/usr/bin/traceroute", "/usr/local/bin/traceroute", NULL };

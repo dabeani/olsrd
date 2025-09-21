@@ -209,7 +209,7 @@ int http_server_register_handler(const char *route, http_handler_fn fn) {
   n->next = g_handlers;
   g_handlers = n;
   pthread_mutex_unlock(&g_handlers_lock);
-  fprintf(stderr, "[httpd] DEBUG: registered handler for route '%s' at %p (fn=%p)\n", route, (void*)n, (void*)fn);
+  if (g_log_request_debug) fprintf(stderr, "[httpd] DEBUG: registered handler for route '%s' at %p (fn=%p)\n", route, (void*)n, (void*)fn);
   fflush(stderr);
   return 0;
 }
@@ -526,18 +526,14 @@ static void *connection_worker(void *arg) {
   }
 
   /* DEBUG: Add immediate debug print after request logging */
-  fprintf(stderr, "[httpd] DEBUG: REQUEST PROCESSED - path='%s' method='%s'\n", r->path, r->method);
-  fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: REQUEST PROCESSED - path='%s' method='%s'\n", r->path, r->method); fflush(stderr); }
 
   /* Enforce allow-list even for static assets */
-  fprintf(stderr, "[httpd] DEBUG: checking client allow-list for %s\n", r->client_ip);
-  fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: checking client allow-list for %s\n", r->client_ip); fflush(stderr); }
   if (!http_is_client_allowed(r->client_ip)) { if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r->client_ip, r->path); struct linger _lg = {1, 0}; setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg, sizeof(_lg)); close(cfd); http_request_free(r); return NULL; }
-  fprintf(stderr, "[httpd] DEBUG: client allowed, checking static assets\n");
-  fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: client allowed, checking static assets\n"); fflush(stderr); }
   if (starts_with(r->path, "/css/") || starts_with(r->path, "/js/") || starts_with(r->path, "/fonts/")) { if (g_log_access) fprintf(stderr, "[httpd] static asset request: %s (serve from %s)\n", r->path, g_asset_root); http_send_file(r, g_asset_root, r->path+1, NULL); close(cfd); http_request_free(r); return NULL; }
-  fprintf(stderr, "[httpd] DEBUG: not static asset, dispatching to handlers\n");
-  fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: not static asset, dispatching to handlers\n"); fflush(stderr); }
   /* dispatch to registered handlers */
   pthread_mutex_lock(&g_handlers_lock);
   http_handler_node_t *nptr = g_handlers;
@@ -546,15 +542,13 @@ static void *connection_worker(void *arg) {
     handler_count++;
     nptr = nptr->next;
   }
-  fprintf(stderr, "[httpd] DEBUG: dispatching to %d handlers\n", handler_count);
-  fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: dispatching to %d handlers\n", handler_count); fflush(stderr); }
   /* Snapshot handler pointers while holding the lock to avoid races with registration/unregistration
    * which may free nodes concurrently. We copy pointers into a small array and then iterate without the
    * lock, preventing dereferencing freed memory inside the lock window. The list length is precomputed above.
    */
   int handled = 0;
-  fprintf(stderr, "[httpd] DEBUG: starting handler dispatch loop, g_handlers=%p (count=%d)\n", (void*)g_handlers, handler_count);
-  fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: starting handler dispatch loop, g_handlers=%p (count=%d)\n", (void*)g_handlers, handler_count); fflush(stderr); }
   /* Create a safe snapshot by copying route and fn into a local buffer while holding the lock. This
    * prevents dereferencing handler nodes after they may have been freed by other threads. */
   struct handler_entry { char route[64]; http_handler_fn fn; } *snapshot = NULL;
@@ -571,7 +565,7 @@ static void *connection_worker(void *arg) {
       }
       handler_count = idx;
     } else {
-      fprintf(stderr, "[httpd] DEBUG: snapshot allocation failed, will iterate under lock\n"); fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: snapshot allocation failed, will iterate under lock\n"); fflush(stderr); }
     }
   }
   /* release lock before calling handlers if we have a safe snapshot */
@@ -579,21 +573,18 @@ static void *connection_worker(void *arg) {
   if (snapshot) {
     for (int i = 0; i < handler_count; ++i) {
       struct handler_entry *ent = &snapshot[i];
-      fprintf(stderr, "[httpd] DEBUG: checking handler %d: idx=%d route='%s' fn=%p\n",
-              i+1, i, ent->route, (void*)ent->fn);
-      fflush(stderr);
+      if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: checking handler %d: idx=%d route='%s' fn=%p\n",
+        i+1, i, ent->route, (void*)ent->fn); fflush(stderr); }
       if (ent->route[0] && strcmp(ent->route, r->path) == 0) {
-        fprintf(stderr, "[httpd] DEBUG: found matching handler for '%s' (idx=%d), calling it\n", r->path, i);
-        fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: found matching handler for '%s' (idx=%d), calling it\n", r->path, i); fflush(stderr); }
         handled = 1;
         if (!http_is_client_allowed(r->client_ip)) {
           if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r->client_ip, ent->route);
           struct linger _lg2 = {1,0}; setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg2, sizeof(_lg2)); close(cfd); http_request_free(r); free(snapshot); return NULL;
         }
-        fprintf(stderr, "[httpd] DEBUG: calling handler function %p for route '%s'\n", (void*)ent->fn, ent->route);
-        fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: calling handler function %p for route '%s'\n", (void*)ent->fn, ent->route); fflush(stderr); }
         ent->fn(r);
-        fprintf(stderr, "[httpd] DEBUG: handler returned\n"); fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: handler returned\n"); fflush(stderr); }
         break;
       }
     }
@@ -604,26 +595,23 @@ static void *connection_worker(void *arg) {
     nptr = g_handlers;
     while (nptr) {
       handler_count++;
-      fprintf(stderr, "[httpd] DEBUG: checking handler %d: node=%p next=%p route='%s' fn=%p\n",
-              handler_count, (void*)nptr, (void*)nptr->next, nptr->route, (void*)nptr->fn);
-      fflush(stderr);
+      if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: checking handler %d: node=%p next=%p route='%s' fn=%p\n",
+        handler_count, (void*)nptr, (void*)nptr->next, nptr->route, (void*)nptr->fn); fflush(stderr); }
       if (nptr->route[0] && strcmp(nptr->route, r->path) == 0) {
-        fprintf(stderr, "[httpd] DEBUG: found matching handler for '%s', calling it\n", r->path);
-        fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: found matching handler for '%s', calling it\n", r->path); fflush(stderr); }
         handled = 1;
         pthread_mutex_unlock(&g_handlers_lock);
         if (!http_is_client_allowed(r->client_ip)) {
           if (g_log_access) fprintf(stderr, "[httpd] client %s not allowed to access %s\n", r->client_ip, nptr->route);
           struct linger _lg2 = {1,0}; setsockopt(cfd, SOL_SOCKET, SO_LINGER, &_lg2, sizeof(_lg2)); close(cfd); http_request_free(r); return NULL;
         }
-        fprintf(stderr, "[httpd] DEBUG: calling handler function %p for route '%s'\n", (void*)nptr->fn, nptr->route);
-        fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: calling handler function %p for route '%s'\n", (void*)nptr->fn, nptr->route); fflush(stderr); }
         nptr->fn(r);
-        fprintf(stderr, "[httpd] DEBUG: handler returned\n"); fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: handler returned\n"); fflush(stderr); }
         break;
       }
       if (!nptr->next) {
-        fprintf(stderr, "[httpd] DEBUG: reached end of handler list (nptr->next is NULL)\n"); fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: reached end of handler list (nptr->next is NULL)\n"); fflush(stderr); }
         break;
       }
       nptr = nptr->next;
@@ -633,8 +621,7 @@ static void *connection_worker(void *arg) {
   if (!handled) {
     pthread_mutex_unlock(&g_handlers_lock);
   }
-  fprintf(stderr, "[httpd] DEBUG: handler dispatch completed, checked %d handlers, handled=%d\n", handler_count, handled);
-  fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: handler dispatch completed, checked %d handlers, handled=%d\n", handler_count, handled); fflush(stderr); }
   if (!handled) {
     if (g_log_access) fprintf(stderr, "[httpd] 404 Not Found: %s\n", r->path);
     http_send_status(r, 404, "Not Found");
@@ -774,8 +761,7 @@ static void *pool_worker(void *arg) {
 
 static void *server_thread(void *arg) {
   (void)arg;
-  fprintf(stderr, "[httpd] DEBUG: server_thread started, g_handlers=%p\n", (void*)g_handlers);
-  fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: server_thread started, g_handlers=%p\n", (void*)g_handlers); fflush(stderr); }
   while (g_run) {
     struct sockaddr_storage ss;
     socklen_t sl = sizeof(ss);
@@ -804,9 +790,8 @@ static void *server_thread(void *arg) {
 }
 
 int http_server_start(const char *bind_ip, int port, const char *asset_root) {
-  fprintf(stderr, "[httpd] DEBUG: http_server_start called with bind_ip='%s', port=%d, asset_root='%s', current g_handlers=%p\n", 
-          bind_ip ? bind_ip : "NULL", port, asset_root ? asset_root : "NULL", (void*)g_handlers);
-  fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: http_server_start called with bind_ip='%s', port=%d, asset_root='%s', current g_handlers=%p\n", 
+    bind_ip ? bind_ip : "NULL", port, asset_root ? asset_root : "NULL", (void*)g_handlers); fflush(stderr); }
   if (asset_root) snprintf(g_asset_root, sizeof(g_asset_root), "%s", asset_root);
   /* Respect new env var OLSRD_STATUS_FETCH_LOG_QUEUE to silence fetch/request access logs
    * If not present, fall back to the older OLSRD_STATUS_ACCESS_LOG for compatibility.
@@ -854,8 +839,7 @@ int http_server_start(const char *bind_ip, int port, const char *asset_root) {
 }
 
 void http_server_stop(void) {
-  fprintf(stderr, "[httpd] DEBUG: http_server_stop called, g_handlers=%p\n", (void*)g_handlers);
-  fflush(stderr);
+  if (g_log_request_debug) { fprintf(stderr, "[httpd] DEBUG: http_server_stop called, g_handlers=%p\n", (void*)g_handlers); fflush(stderr); }
   if (!g_run) return;
   g_run = 0;
   if (g_srv_fd >= 0) { shutdown(g_srv_fd, SHUT_RDWR); close(g_srv_fd); g_srv_fd = -1; }
