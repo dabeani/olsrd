@@ -3320,33 +3320,11 @@ links_done_plain_fallback:
 
   if (olsr_links_raw) { free(olsr_links_raw); olsr_links_raw = NULL; }
 
-  /* diagnostics: report which local olsrd endpoints were probed and traceroute info */
+  /* diagnostics: lightweight info (no loopback probes) */
   {
     APPEND(",\"diagnostics\":{");
-    /* endpoints probed earlier (try same list) */
-    const char *eps[] = { "http://127.0.0.1:9090/links", "http://127.0.0.1:2006/links", "http://127.0.0.1:8123/links", NULL };
-    APPEND("\"olsrd_endpoints\":[");
-    int first_ep = 1;
-    for (const char **ep = eps; *ep; ++ep) {
-      /* Avoid performing HTTP probes here — report support for internalized ports
-       * based on the known internal ports list. This keeps diagnostics light and
-       * deterministic (no network calls).
-       */
-      int ok = 0; size_t tlen = 0;
-      if (strstr(*ep, ":9090") || strstr(*ep, ":2006") || strstr(*ep, ":8123")) {
-        ok = 1; /* internalized and served by in-memory collectors */
-      }
-      if (!first_ep) {
-        APPEND(",");
-      }
-      first_ep = 0;
-      APPEND("{\"url\":"); json_append_escaped(&buf,&len,&cap,*ep);
-      APPEND(",\"ok\":%s,\"len\":%zu,\"sample\":", ok?"true":"false", tlen);
-      json_append_escaped(&buf,&len,&cap,"");
-      APPEND("}");
-    }
-    APPEND("]");
-    APPEND(",\"traceroute\":{\"available\":%s,\"path\":", g_has_traceroute?"true":"false"); json_append_escaped(&buf,&len,&cap, g_traceroute_path);
+    APPEND("\"traceroute\":{\"available\":%s,\"path\":", g_has_traceroute?"true":"false");
+    json_append_escaped(&buf,&len,&cap, g_traceroute_path);
     APPEND("}");
     APPEND("}");
   }
