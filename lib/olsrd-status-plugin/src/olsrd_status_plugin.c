@@ -43,6 +43,40 @@
 #include "airos_cache.h"
 #include "olsrd_status_collectors.h"
 
+/* Plugin-local helper types (kept local to the plugin). These are small
+ * convenience definitions that provide the in-process coalescing and fetch
+ * queue bookkeeping used only inside this plugin. They are intentionally
+ * defined here to avoid introducing headers outside the plugin tree.
+ */
+typedef struct endpoint_coalesce {
+  pthread_mutex_t m;
+  pthread_cond_t  cv;
+  int              busy;
+  char            *cached;
+  size_t           cached_len;
+  time_t           ts;
+  int              ttl;
+} endpoint_coalesce_t;
+
+struct fetch_req {
+  int force;
+  int wait;
+  int done;
+  int type;
+  pthread_mutex_t m;
+  pthread_cond_t  cv;
+  struct fetch_req *next;
+};
+
+/* Fetch queue globals (plugin-local) */
+static struct fetch_req *g_fetch_q_head = NULL;
+static struct fetch_req *g_fetch_q_tail = NULL;
+static pthread_mutex_t g_fetch_q_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  g_fetch_q_cv = PTHREAD_COND_INITIALIZER;
+static int g_fetch_worker_running = 0;
+static int g_fetch_wait_timeout = 5; /* seconds to wait for deduped requests */
+
+
 /* Ensure UBNT_DEBUG is defined when compiling this translation unit.
  * rev/discover/ubnt_discover.c defines a compile-time UBNT_DEBUG fallback
  * locally; the plugin also references UBNT_DEBUG so provide a safe default
@@ -250,46 +284,21 @@ static char *filter_devices_array(const char *in, int lite, int drop_empty, size
             continue;
           }
           const char *key_start = kp + 1;
-          const char *key_p = key_start;
-          while (key_p < obj_end && *key_p != '"') {
-            if (*key_p == '\\' && key_p + 1 < obj_end) key_p += 2;
-            else key_p++;
+          const char *key_end = key_start; /* find end of key */
+          while (key_end < obj_end && *key_end != '"') {
+            if (*key_end == '\\' && key_end + 1 < obj_end) key_end += 2;
+            else key_end++;
           }
-          if (key_p >= obj_end) {
-            break;
-          }
-          const char *key_end = key_p;
-          kp = key_p + 1;
-          while (kp < obj_end && isspace((unsigned char)*kp)) {
-            kp++;
-          }
-          if (kp>=obj_end || *kp != ':') {
-            break;
-          }
-          kp++; /* skip ':' */
-          while (kp < obj_end && isspace((unsigned char)*kp)) {
-            kp++;
-          }
-          if (kp>=obj_end) {
-            break;
-          }
-          const char *val_start = kp;
-          const char *val_end = NULL;
-          if (*kp == '"') {
-            /* string */
-            kp++;
-            while (kp < obj_end && *kp != '"') {
-              if (*kp == '\\' && kp + 1 < obj_end) kp += 2; else kp++;
-            }
-            if (kp >= obj_end) {
-              break;
-            }
-            kp++;
-            val_end = kp; /* include closing quote */
+          /* find colon and value start */
+          const char *colon = key_end; while (colon < obj_end && *colon != ':') colon++;
+          if (colon >= obj_end) { kp = key_end + 1; continue; }
+          colon++; while (colon < obj_end && isspace((unsigned char)*colon)) colon++;
+          const char *val_start = colon; const char *val_end = val_start;
+          if (val_start < obj_end && *val_start == '"') {
+            val_end++; while (val_end < obj_end && *val_end != '"') { if (*val_end == '\\' && val_end + 1 < obj_end) val_end += 2; else val_end++; }
+            if (val_end < obj_end) val_end++; /* include closing quote */
           } else {
-            /* primitive */
-            while (kp < obj_end && *kp != ',' && *kp != '}') kp++;
-            val_end = kp;
+            while (val_end < obj_end && *val_end != ',' && *val_end != '}') val_end++;
           }
           /* capture raw key and value substrings */
           size_t klen = (size_t)(key_end - key_start);
@@ -388,41 +397,6 @@ static unsigned long g_metric_unique_nodes = 0;
 /* fetch request types (bitmask) */
 #define FETCH_TYPE_NODEDB   0x1
 #define FETCH_TYPE_DISCOVER 0x2
-
-      struct autobuf ab;
-      if (abuf_init(&ab, 1024) == 0) {
-        if (strncmp(path, "/links", 6) == 0 || strncmp(path, "/lin", 4) == 0) {
-          status_collect_links(&ab);
-        } else if (strncmp(path, "/routes", 7) == 0 || strncmp(path, "/rou", 4) == 0) {
-          status_collect_routes(&ab);
-        } else if (strncmp(path, "/topology", 9) == 0 || strncmp(path, "/top", 4) == 0) {
-          status_collect_topology(&ab);
-        } else if (strncmp(path, "/neighbors", 10) == 0 || strncmp(path, "/nei", 4) == 0) {
-          status_collect_neighbors(&ab);
-        } else if (strncmp(path, "/hna", 4) == 0) {
-          status_collect_hna(&ab);
-        } else if (strncmp(path, "/mid", 4) == 0) {
-          status_collect_mid(&ab);
-        } else {
-          /* Unknown :2006 path; fall back to TCP fetch */
-          abuf_free(&ab);
-          rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
-        }
-
-        if (rc == -1) {
-          /* We generated output in 'ab' - copy to tmp and return */
-          tmp = malloc(ab.len + 1);
-          if (tmp) {
-            memcpy(tmp, ab.buf, ab.len);
-            tmp[ab.len] = '\0';
-            tlen = ab.len;
-            rc = 0;
-          } else {
-            rc = -1;
-          }
-        }
-        abuf_free(&ab);
-      }
 static void endpoint_coalesce_init(endpoint_coalesce_t *e, int ttl) {
   if (!e) return;
   pthread_mutex_init(&e->m, NULL);
@@ -688,38 +662,38 @@ static int cached_util_http_get_url_local(const char *url, char **out, size_t *o
     const char *path = NULL;
     if (p) path = strchr(p + 5, '/');
     if (path) {
-      struct autobuf out;
-      if (abuf_init(&out, 1024) == 0) {
+      struct autobuf ab;
+      if (abuf_init(&ab, 1024) == 0) {
         if (strncmp(path, "/links", 6) == 0 || strncmp(path, "/lin", 4) == 0) {
-          status_collect_links(&out);
+          status_collect_links(&ab);
         } else if (strncmp(path, "/routes", 7) == 0 || strncmp(path, "/rou", 4) == 0) {
-          status_collect_routes(&out);
+          status_collect_routes(&ab);
         } else if (strncmp(path, "/topology", 9) == 0 || strncmp(path, "/top", 4) == 0) {
-          status_collect_topology(&out);
+          status_collect_topology(&ab);
         } else if (strncmp(path, "/neighbors", 10) == 0 || strncmp(path, "/nei", 4) == 0) {
-          status_collect_neighbors(&out);
+          status_collect_neighbors(&ab);
         } else if (strncmp(path, "/hna", 4) == 0) {
-          status_collect_hna(&out);
+          status_collect_hna(&ab);
         } else if (strncmp(path, "/mid", 4) == 0) {
-          status_collect_mid(&out);
+          status_collect_mid(&ab);
         } else {
           /* Unknown :2006 path; fall back to TCP fetch */
-          abuf_free(&out);
+          abuf_free(&ab);
           rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
         }
 
         if (rc == -1) {
-          /* We generated output in 'out' - copy to tmp and return */
-          tmp = malloc(out.len + 1);
+          /* We generated output in 'ab' - copy to tmp and return */
+          tmp = malloc(ab.len + 1);
           if (tmp) {
-            memcpy(tmp, out.buf, out.len);
-            tmp[out.len] = '\0';
-            tlen = out.len;
+            memcpy(tmp, ab.buf, ab.len);
+            tmp[ab.len] = '\0';
+            tlen = ab.len;
             rc = 0;
           } else {
             rc = -1;
           }
-          abuf_free(&out);
+          abuf_free(&ab);
         }
       } else {
         /* allocation failed - fall back */
