@@ -98,13 +98,16 @@ void status_collect_routes(struct autobuf *abuf) {
     struct lqtextbuffer costbuffer;
 
     if (rt->rt_best) {
-      abuf_appendf(abuf, "%s/%d\t%s\t%d\t%s\t%s\t\n",
+      /* Append a small JSON fragment at end of line so fallback parsers can detect gateway/destination keys */
+      abuf_appendf(abuf, "%s/%d\t%s\t%d\t%s\t%s\t{\"destination\":\"%s/%d\",\"gateway\":\"%s\"}\n",
         olsr_ip_to_string(&dstAddr, &rt->rt_dst.prefix),
         rt->rt_dst.prefix_len,
         olsr_ip_to_string(&nexthopAddr, &rt->rt_best->rtp_nexthop.gateway),
         rt->rt_best->rtp_metric.hops,
         get_linkcost_text(rt->rt_best->rtp_metric.cost, true, &costbuffer),
-        if_ifwithindex_name(rt->rt_best->rtp_nexthop.iif_index));
+        if_ifwithindex_name(rt->rt_best->rtp_nexthop.iif_index),
+        olsr_ip_to_string(&dstAddr, &rt->rt_dst.prefix), rt->rt_dst.prefix_len,
+        olsr_ip_to_string(&nexthopAddr, &rt->rt_best->rtp_nexthop.gateway));
     }
   } OLSR_FOR_ALL_RT_ENTRIES_END(rt);
   abuf_puts(abuf, "\n");
@@ -125,13 +128,14 @@ void status_collect_topology(struct autobuf *abuf) {
         struct lqtextbuffer lqbuffer;
         struct lqtextbuffer costbuffer;
 
-        abuf_appendf(abuf, "%s\t%s\t%s\t%s",
+        /* Append tiny JSON object with destination and lastHop to help fallback scanners */
+        abuf_appendf(abuf, "%s\t%s\t%s\t%s\t{\"destinationIP\":\"%s\",\"lastHopIP\":\"%s\"}\n",
           olsr_ip_to_string(&dstAddr, &tc_edge->T_dest_addr),
           olsr_ip_to_string(&lastHopAddr, &tc->addr),
           get_tc_edge_entry_text(tc_edge, '\t', &lqbuffer),
-          get_linkcost_text(tc_edge->cost, false, &costbuffer));
-
-        abuf_puts(abuf, "\n");
+          get_linkcost_text(tc_edge->cost, false, &costbuffer),
+          olsr_ip_to_string(&dstAddr, &tc_edge->T_dest_addr),
+          olsr_ip_to_string(&lastHopAddr, &tc->addr));
       }
     } OLSR_FOR_ALL_TC_EDGE_ENTRIES_END(tc, tc_edge);
   } OLSR_FOR_ALL_TC_ENTRIES_END(tc);

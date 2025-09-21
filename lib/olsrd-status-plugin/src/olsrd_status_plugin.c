@@ -1575,10 +1575,12 @@ static int count_routes_for_ip(const char *section, const char *ip) {
       if (end>obj) {
         char *v; size_t vlen; char gw[64] = "";
         if (find_json_string_value(obj,"gateway",&v,&vlen) ||
-            find_json_string_value(obj,"via",&v,&vlen) ||
-            find_json_string_value(obj,"gatewayIP",&v,&vlen) ||
-            find_json_string_value(obj,"nextHop",&v,&vlen) ||
-            find_json_string_value(obj,"nexthop",&v,&vlen)) {
+          find_json_string_value(obj,"gatewayIp",&v,&vlen) ||
+          find_json_string_value(obj,"via",&v,&vlen) ||
+          find_json_string_value(obj,"gatewayIP",&v,&vlen) ||
+          find_json_string_value(obj,"nextHop",&v,&vlen) ||
+          find_json_string_value(obj,"nexthop",&v,&vlen) ||
+          find_json_string_value(obj,"neighbor",&v,&vlen)) {
           snprintf(gw,sizeof(gw),"%.*s",(int)vlen,v);
         }
         /* strip /mask if present */
@@ -1666,11 +1668,14 @@ static int count_nodes_for_ip(const char *section, const char *ip) {
     if (find_json_string_value(obj,"lastHopIP",&v,&vlen) ||
       find_json_string_value(obj,"lastHopIp",&v,&vlen) ||
       find_json_string_value(obj,"lastHopIpAddress",&v,&vlen) ||
+      find_json_string_value(obj,"lastHopIpv4",&v,&vlen) ||
       find_json_string_value(obj,"lastHop",&v,&vlen) ||
       find_json_string_value(obj,"via",&v,&vlen) ||
       find_json_string_value(obj,"gateway",&v,&vlen) ||
+      find_json_string_value(obj,"gatewayIp",&v,&vlen) ||
       find_json_string_value(obj,"gatewayIP",&v,&vlen) ||
-      find_json_string_value(obj,"nextHop",&v,&vlen)) {
+      find_json_string_value(obj,"nextHop",&v,&vlen) ||
+      find_json_string_value(obj,"neighbor",&v,&vlen)) {
           snprintf(lh,sizeof(lh),"%.*s",(int)vlen,v);
         }
         if (lh[0]) {
@@ -1734,14 +1739,17 @@ static int count_unique_nodes_for_ip(const char *section, const char *ip) {
       char lastHopTrim[128]; snprintf(lastHopTrim,sizeof(lastHopTrim),"%s",lastHop); char *slash = strchr(lastHopTrim,'/'); if (slash) *slash='\0';
       if (strcmp(lastHopTrim, ip)!=0) continue; /* only entries for this neighbor */
       /* Extract destination variants */
-      if (find_json_string_value(obj,"destinationIP",&v,&vlen) ||
-          find_json_string_value(obj,"destinationIp",&v,&vlen) ||
-          find_json_string_value(obj,"destination",&v,&vlen) ||
-          find_json_string_value(obj,"destIpAddress",&v,&vlen) ||
-          find_json_string_value(obj,"dest",&v,&vlen) ||
-          find_json_string_value(obj,"to",&v,&vlen) ||
-          find_json_string_value(obj,"target",&v,&vlen) ||
-          find_json_string_value(obj,"originator",&v,&vlen)) {
+    if (find_json_string_value(obj,"destinationIP",&v,&vlen) ||
+      find_json_string_value(obj,"destinationIp",&v,&vlen) ||
+      find_json_string_value(obj,"destination",&v,&vlen) ||
+      find_json_string_value(obj,"destination_ip",&v,&vlen) ||
+      find_json_string_value(obj,"destIpAddress",&v,&vlen) ||
+      find_json_string_value(obj,"dest",&v,&vlen) ||
+      find_json_string_value(obj,"to",&v,&vlen) ||
+      find_json_string_value(obj,"toIP",&v,&vlen) ||
+      find_json_string_value(obj,"toIp",&v,&vlen) ||
+      find_json_string_value(obj,"target",&v,&vlen) ||
+      find_json_string_value(obj,"originator",&v,&vlen)) {
         snprintf(dest,sizeof(dest),"%.*s",(int)vlen,v);
       }
       if (!dest[0]) continue;
@@ -4200,6 +4208,8 @@ static int h_status_lite(http_request_t *r) {
             }
             if (sum_routes > 0 || sum_nodes > 0) {
               olsr_routes = sum_routes; olsr_nodes = sum_nodes;
+              /* Persist computed lightweight counts so other handlers (and metrics) see them */
+              METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
             }
           }
           if (norm) free(norm);
