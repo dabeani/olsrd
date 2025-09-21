@@ -653,14 +653,22 @@ static int cached_util_http_get_url_local(const char *url, char **out, size_t *o
   pthread_mutex_unlock(&g_local_cache_lock);
 
   char *tmp = NULL; size_t tlen = 0;
-  /* Intercept local txtinfo-style endpoints on port 2006 and generate the
-   * output in-process using direct collectors to avoid TCP/IPC.
+  /* Intercept local txtinfo/json-style endpoints on ports 2006, 9090 and 8123
+   * and generate the output in-process using direct collectors to avoid
+   * TCP/IPC or spawning external curl processes. These ports are commonly
+   * used by olsrd/olsrd2 txtinfo/json endpoints.
    */
   int rc = -1;
-  if (url && strstr(url, "127.0.0.1:2006")) {
-    const char *p = strstr(url, ":2006");
+  const char *local_ports[] = { ":2006", ":9090", ":8123", NULL };
+  const char *found_port = NULL;
+  for (const char **pp = local_ports; *pp; ++pp) {
+    if (url && strstr(url, "127.0.0.1") && strstr(url, *pp)) { found_port = *pp; break; }
+  }
+
+  if (found_port) {
+    const char *p = strstr(url, found_port);
     const char *path = NULL;
-    if (p) path = strchr(p + 5, '/');
+    if (p) path = strchr(p + strlen(found_port), '/');
     if (path) {
       struct autobuf ab;
       if (abuf_init(&ab, 1024) == 0) {
@@ -677,7 +685,7 @@ static int cached_util_http_get_url_local(const char *url, char **out, size_t *o
         } else if (strncmp(path, "/mid", 4) == 0) {
           status_collect_mid(&ab);
         } else {
-          /* Unknown :2006 path; fall back to TCP fetch */
+          /* Unknown local path; fall back to TCP fetch */
           abuf_free(&ab);
           rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
         }
@@ -700,11 +708,19 @@ static int cached_util_http_get_url_local(const char *url, char **out, size_t *o
         rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
       }
     } else {
-      /* no path after :2006 - fall back */
-      rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
+      /* no path after port - do NOT fall back to TCP for local endpoints; fail fast */
+      rc = -1;
     }
   } else {
-    rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
+    /* If URL targets localhost/127.0.0.1 but we didn't match a known internal port,
+     * do not perform an HTTP fetch — fail instead to avoid external IPC.
+     * Non-local URLs may still be fetched by util_http_get_url_local.
+     */
+    if (url && (strstr(url, "127.0.0.1") || strstr(url, "localhost"))) {
+      rc = -1;
+    } else {
+      rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
+    }
   }
   if (rc != 0 || !tmp) { if (tmp) { free(tmp); } return rc; }
 
