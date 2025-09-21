@@ -60,12 +60,3 @@ It's desirable to have them configurable through the configuration file.
 
 Add configuration option to completely disable the use of NL80211 data, in
 case the plugin is merged with the existing ff_eth link quality plugin.
-
----
-Note about `lib/olsrd-status-plugin`:
-The `olsrd-status-plugin` intentionally depends on core olsrd implementations
-(for example `autobuf` and other internal helpers) and is meant to be loaded
-by the running `olsrd` daemon; it is not designed to run standalone. Do not
-add local copies of core implementation files into the plugin — doing so can
-cause duplicate symbol collisions when the plugin is loaded. Build the plugin
-with `make -C lib/olsrd-status-plugin` as part of the repository build.

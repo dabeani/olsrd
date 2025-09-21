@@ -29,5 +29,3 @@
 /olsr-setup.exe
 /src/cfgparser/olsrd_cfgparser
 lib/olsrd-status-plugin/build.log
-lib/dot_draw/olsrd_dot_draw.0.3.dylib
-lib/httpinfo/olsrd_httpinfo.0.1.dylib
