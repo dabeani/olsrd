@@ -1723,10 +1723,16 @@ static char *extract_json_array_from_blob(const char *blob) {
   /* Try named extraction */
   char *val = NULL; size_t vlen = 0;
   if (extract_json_value(blob, "routes", &val, &vlen) == 0) {
-    if (val && vlen>0 && val[0] == '[') return val; free(val); val = NULL;
+    if (val && vlen>0 && val[0] == '[') {
+      return val;
+    }
+    free(val); val = NULL;
   }
   if (extract_json_value(blob, "topology", &val, &vlen) == 0) {
-    if (val && vlen>0 && val[0] == '[') return val; free(val); val = NULL;
+    if (val && vlen>0 && val[0] == '[') {
+      return val;
+    }
+    free(val); val = NULL;
   }
   const char *arr = strchr(blob, '[');
   if (!arr) return NULL;
@@ -2385,7 +2391,7 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
 }
 
 /* plain-text parser removed: no longer supported. */
-int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen) { (void)raw; (void)outbuf; (void)outlen; return -1; }
+static int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen) { (void)raw; (void)outbuf; (void)outlen; return -1; }
 
 
 /* UBNT discover output acquisition using internal discovery only */
