@@ -1698,6 +1698,43 @@ static int extract_json_value(const char *buf, const char *key, char **out, size
   }
 }
 
+/* Helper: extract a JSON array from a blob.
+ * Returns a malloc'ed copy of the first array found or NULL on failure.
+ */
+static char *extract_json_array_from_blob(const char *blob) {
+  if (!blob) return NULL;
+  const char *p = blob;
+  while (*p && isspace((unsigned char)*p)) p++;
+  if (*p == '[') {
+    const char *q = p; int depth = 0;
+    while (*q) {
+      if (*q == '[') depth++;
+      else if (*q == ']') { depth--; if (depth == 0) { q++; break; } }
+      q++;
+    }
+    if (q > p) {
+      size_t L = (size_t)(q - p);
+      char *out = malloc(L + 1);
+      if (!out) return NULL;
+      memcpy(out, p, L); out[L] = '\0'; return out;
+    }
+    return NULL;
+  }
+  /* Try named extraction */
+  char *val = NULL; size_t vlen = 0;
+  if (extract_json_value(blob, "routes", &val, &vlen) == 0) {
+    if (val && vlen>0 && val[0] == '[') return val; free(val); val = NULL;
+  }
+  if (extract_json_value(blob, "topology", &val, &vlen) == 0) {
+    if (val && vlen>0 && val[0] == '[') return val; free(val); val = NULL;
+  }
+  const char *arr = strchr(blob, '[');
+  if (!arr) return NULL;
+  const char *q = arr; int depth = 0; while (*q) { if (*q == '[') depth++; else if (*q == ']') { depth--; if (depth == 0) { q++; break; } } q++; }
+  if (q > arr) { size_t L = (size_t)(q - arr); char *out = malloc(L + 1); if (!out) return NULL; memcpy(out, arr, L); out[L] = '\0'; return out; }
+  return NULL;
+}
+
 /* Transform a normalized devices JSON array into the legacy schema expected by bmk-webstatus.py
  * This is a best-effort textual reconstruction using the available normalized fields.
  * Input: devices_json (string containing JSON array of objects)
@@ -2347,8 +2384,8 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   if (gw_stats) { free(gw_stats); gw_stats = NULL; gw_stats_count = 0; }
 }
 
-/* Fallback plain-text parser implemented in standalone_links_parser.c */
-int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen);
+/* plain-text parser removed: no longer supported. */
+int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen) { (void)raw; (void)outbuf; (void)outlen; return -1; }
 
 
 /* UBNT discover output acquisition using internal discovery only */
@@ -5016,15 +5053,57 @@ static int h_olsr_raw(http_request_t *r) {
       abuf_free(&tab);
     }
   }
-  char *buf=NULL; size_t cap=8192,len=0; buf=malloc(cap); if(!buf){ send_json(r,"{\"err\":\"oom\"}\n"); goto done; } buf[0]=0;
-  #define APP_RAW(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { if(buf){ free(buf);} send_json(r,"{\"err\":\"oom\"}\n"); goto done; } } while(0)
+  /* Attempt to provide structured JSON arrays in addition to raw string fields for compatibility.
+   * links: normalized array via normalize_olsrd_links()
+   * routes: try to extract an array from routes_raw or treat routes_raw as an array if it starts with '['
+   * topology: same as routes
+   */
+  char *norm_links = NULL; size_t nlinks = 0;
+  {
+    size_t l1 = links_raw?strlen(links_raw):0;
+    size_t l2 = routes_raw?strlen(routes_raw):0;
+    size_t l3 = topology_raw?strlen(topology_raw):0;
+    size_t total = l1 + l2 + l3;
+    if (total && total < (512 * 1024)) {
+      char *combined_raw = malloc(total + 16);
+      if (combined_raw) {
+        size_t off=0;
+        if (l1){ memcpy(combined_raw+off,links_raw,l1); off+=l1; combined_raw[off++]='\n'; }
+        if (l2){ memcpy(combined_raw+off,routes_raw,l2); off+=l2; combined_raw[off++]='\n'; }
+        if (l3){ memcpy(combined_raw+off,topology_raw,l3); off+=l3; }
+        combined_raw[off]=0;
+        if (normalize_olsrd_links(combined_raw, &norm_links, &nlinks) != 0) { norm_links = NULL; nlinks = 0; }
+        if ((nlinks == 0) || (norm_links && strcmp(norm_links, "[]") == 0)) {
+          if (norm_links) { free(norm_links); norm_links = NULL; nlinks = 0; }
+          if (normalize_olsrd_links_plain(combined_raw, &norm_links, &nlinks) != 0) { if (norm_links) { free(norm_links); norm_links = NULL; nlinks = 0; } }
+        }
+        free(combined_raw);
+      }
+    }
+  }
+
+  /* structured array extraction handled by extract_json_array_from_blob() */
+
+  char *routes_struct = NULL; char *topology_struct = NULL;
+  routes_struct = extract_json_array_from_blob(routes_raw);
+  topology_struct = extract_json_array_from_blob(topology_raw);
+
+  char *buf=NULL; size_t cap=8192,len=0; buf=malloc(cap); if(!buf){ send_json(r,"{}\n"); goto done; } buf[0]=0;
+  #define APP_RAW(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { if(buf){ free(buf);} send_json(r,"{}\n"); goto done; } } while(0)
   APP_RAW("{");
+  /* raw fields for compatibility */
   APP_RAW("\"links_raw\":"); if(links_raw) json_append_escaped(&buf,&len,&cap, links_raw); else APP_RAW("\"\""); APP_RAW(",");
   APP_RAW("\"routes_raw\":"); if(routes_raw) json_append_escaped(&buf,&len,&cap, routes_raw); else APP_RAW("\"\""); APP_RAW(",");
-  APP_RAW("\"topology_raw\":"); if(topology_raw) json_append_escaped(&buf,&len,&cap, topology_raw); else APP_RAW("\"\"");
+  APP_RAW("\"topology_raw\":"); if(topology_raw) json_append_escaped(&buf,&len,&cap, topology_raw); else APP_RAW("\"\""); APP_RAW(",");
+  /* structured arrays (emit raw JSON arrays or empty arrays) */
+  APP_RAW("\"links\":"); if (norm_links) APP_RAW("%s", norm_links); else APP_RAW("[]"); APP_RAW(",");
+  APP_RAW("\"routes\":"); if (routes_struct) APP_RAW("%s", routes_struct); else APP_RAW("[]"); APP_RAW(",");
+  APP_RAW("\"topology\":"); if (topology_struct) APP_RAW("%s", topology_struct); else APP_RAW("[]");
   APP_RAW("}\n");
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len);
   free(buf);
+  if (routes_struct) { free(routes_struct); routes_struct = NULL; }
+  if (topology_struct) { free(topology_struct); topology_struct = NULL; }
 done:
   if(links_raw) free(links_raw);
   if(routes_raw) free(routes_raw);
