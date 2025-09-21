@@ -1,5 +1,10 @@
 This are the rules for this session to remember:
 be accurate - dont write long conclusions/what was done;
 always check if the code is working before answering;
-Be concise; run needed terminal commands locally; read files fully; fix scripts and compiler warnings (do not change Makefile without my ok); avoid CDNs; i will verify build in a Linux/container environment before reporting; indicate whether to auto-commit fixes.
+Be concise; run needed commands in terminal locally; 
+read files fully; 
+fix scripts and compiler warnings (do not change Makefile without my ok); 
+avoid CDNs; 
+commit and push changed (same branch!)
+Update README.md if needed;
 Now wait for my commands;
