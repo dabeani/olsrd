@@ -955,158 +955,26 @@ static char *extract_first_json_value(const char *s) {
 }
 
 
-/* Global short-lived cache for local HTTP calls (thread-safe, small TTL) */
-#define LOCAL_CACHE_ENTRIES 64
-#define LOCAL_CACHE_TTL_SEC 1
-typedef struct { char *url; char *body; size_t len; time_t ts; } local_cache_entry_t;
-static local_cache_entry_t g_local_cache[LOCAL_CACHE_ENTRIES];
-static pthread_mutex_t g_local_cache_lock = PTHREAD_MUTEX_INITIALIZER;
+/* Note: removed local cached HTTP wrapper; calls to util_http_get_url_local will
+ * use the global implementation in src/util.c. The plugin now prefers direct
+ * in-memory collectors and no longer intercepts localhost:2006/9090/8123 paths.
+ */
 
-/* Simple cache for /status/lite responses */
+/* Simple cache for /status/lite responses (kept minimal) */
 static char *g_status_lite_cache = NULL;
 static size_t g_status_lite_cache_len = 0;
 static time_t g_status_lite_cache_ts = 0;
 static pthread_mutex_t g_status_lite_cache_lock = PTHREAD_MUTEX_INITIALIZER;
-static int g_status_lite_ttl_s = 30; /* seconds (tuned from 3 -> 30 per request) */
+static int g_status_lite_ttl_s = 30;
 
-/* Background refresher: fetch /status/lite locally and update cache */
+/* Background refresher: no-op stub preserved for compatibility; original cached
+ * HTTP wrapper was removed, so the refresher will not try special-local fetches.
+ */
 static void *status_lite_refresher(void *arg) {
   (void)arg;
-  char *tmp = NULL; size_t tlen = 0;
-  char url[256]; snprintf(url, sizeof(url), "http://127.0.0.1:%d/status/lite", g_port);
-  /* short timeout for local call */
-  if (util_http_get_url_local(url, &tmp, &tlen, 2) == 0 && tmp && tlen > 0) {
-    pthread_mutex_lock(&g_status_lite_cache_lock);
-    if (g_status_lite_cache) { free(g_status_lite_cache); g_status_lite_cache = NULL; g_status_lite_cache_len = 0; }
-    g_status_lite_cache = tmp; g_status_lite_cache_len = tlen; g_status_lite_cache_ts = time(NULL);
-    pthread_mutex_unlock(&g_status_lite_cache_lock);
-    /* tmp ownership transferred to cache */
-  } else {
-    if (tmp) free(tmp);
-  }
+  /* Disabled: collectors populate responses on-demand. */
   return NULL;
 }
-
-static int cached_util_http_get_url_local(const char *url, char **out, size_t *outlen, int timeout_sec) {
-  if (!url || !out || !outlen) return -1;
-  time_t nowt = time(NULL);
-  pthread_mutex_lock(&g_local_cache_lock);
-  for (int i = 0; i < LOCAL_CACHE_ENTRIES; ++i) {
-    if (g_local_cache[i].url && strcmp(g_local_cache[i].url, url) == 0) {
-      if (nowt - g_local_cache[i].ts <= LOCAL_CACHE_TTL_SEC) {
-        *out = malloc(g_local_cache[i].len + 1);
-        if (!*out) { pthread_mutex_unlock(&g_local_cache_lock); return -1; }
-        memcpy(*out, g_local_cache[i].body, g_local_cache[i].len + 1);
-        *outlen = g_local_cache[i].len;
-        pthread_mutex_unlock(&g_local_cache_lock);
-        return 0;
-      }
-      free(g_local_cache[i].url); g_local_cache[i].url = NULL;
-      free(g_local_cache[i].body); g_local_cache[i].body = NULL;
-      g_local_cache[i].len = 0; g_local_cache[i].ts = 0;
-    }
-  }
-  pthread_mutex_unlock(&g_local_cache_lock);
-
-  char *tmp = NULL; size_t tlen = 0;
-  /* Intercept local txtinfo/json-style endpoints on ports 2006, 9090 and 8123
-   * and generate the output in-process using direct collectors to avoid
-   * TCP/IPC or spawning external curl processes. These ports are commonly
-   * used by olsrd/olsrd2 txtinfo/json endpoints.
-   */
-  int rc = -1;
-  const char *local_ports[] = { ":2006", ":9090", ":8123", NULL };
-  const char *found_port = NULL;
-  for (const char **pp = local_ports; *pp; ++pp) {
-    if (url && strstr(url, "127.0.0.1") && strstr(url, *pp)) { found_port = *pp; break; }
-  }
-
-  if (found_port) {
-    const char *p = strstr(url, found_port);
-    const char *path = NULL;
-    if (p) path = strchr(p + strlen(found_port), '/');
-    if (path) {
-      struct autobuf ab;
-      if (abuf_init(&ab, 1024) == 0) {
-        if (strncmp(path, "/links", 6) == 0 || strncmp(path, "/lin", 4) == 0) {
-          status_collect_links(&ab);
-        } else if (strncmp(path, "/routes", 7) == 0 || strncmp(path, "/rou", 4) == 0) {
-          status_collect_routes(&ab);
-        } else if (strncmp(path, "/topology", 9) == 0 || strncmp(path, "/top", 4) == 0) {
-          status_collect_topology(&ab);
-        } else if (strncmp(path, "/neighbors", 10) == 0 || strncmp(path, "/nei", 4) == 0) {
-          status_collect_neighbors(&ab);
-        } else if (strncmp(path, "/hna", 4) == 0) {
-          status_collect_hna(&ab);
-        } else if (strncmp(path, "/mid", 4) == 0) {
-          status_collect_mid(&ab);
-        } else {
-          /* Unknown local path; fall back to TCP fetch */
-          abuf_free(&ab);
-          rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
-        }
-
-        if (rc == -1) {
-          /* We generated output in 'ab' - copy to tmp and return */
-          tmp = malloc(ab.len + 1);
-          if (tmp) {
-            memcpy(tmp, ab.buf, ab.len);
-            tmp[ab.len] = '\0';
-            tlen = ab.len;
-            rc = 0;
-          } else {
-            rc = -1;
-          }
-          abuf_free(&ab);
-        }
-      } else {
-        /* allocation failed - fall back */
-        rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
-      }
-    } else {
-      /* no path after port - do NOT fall back to TCP for local endpoints; fail fast */
-      rc = -1;
-    }
-  } else {
-    /* If URL targets localhost/127.0.0.1 but we didn't match a known internal port,
-     * do not perform an HTTP fetch — fail instead to avoid external IPC.
-     * Non-local URLs may still be fetched by util_http_get_url_local.
-     */
-    if (url && (strstr(url, "127.0.0.1") || strstr(url, "localhost"))) {
-      rc = -1;
-    } else {
-      rc = util_http_get_url_local(url, &tmp, &tlen, timeout_sec);
-    }
-  }
-  if (rc != 0 || !tmp) { if (tmp) { free(tmp); } return rc; }
-
-  pthread_mutex_lock(&g_local_cache_lock);
-  int sel = 0; time_t oldest = nowt;
-  for (int i = 0; i < LOCAL_CACHE_ENTRIES; ++i) {
-    if (!g_local_cache[i].url) { sel = i; break; }
-    if (g_local_cache[i].ts < oldest) { oldest = g_local_cache[i].ts; sel = i; }
-  }
-  if (g_local_cache[sel].url) free(g_local_cache[sel].url);
-  if (g_local_cache[sel].body) free(g_local_cache[sel].body);
-  g_local_cache[sel].url = strdup(url);
-  g_local_cache[sel].body = malloc(tlen + 1);
-  if (g_local_cache[sel].body) {
-    memcpy(g_local_cache[sel].body, tmp, tlen + 1);
-    g_local_cache[sel].len = tlen;
-    g_local_cache[sel].ts = nowt;
-  } else {
-    free(g_local_cache[sel].url); g_local_cache[sel].url = NULL;
-    g_local_cache[sel].len = 0; g_local_cache[sel].ts = 0;
-  }
-  pthread_mutex_unlock(&g_local_cache_lock);
-
-  *out = tmp; *outlen = tlen;
-  return 0;
-}
-
-/* Use cached wrapper in this compilation unit */
-#undef util_http_get_url_local
-#define util_http_get_url_local(url,out,outlen,timeout_sec) cached_util_http_get_url_local(url,out,outlen,timeout_sec)
 
 /* Worker: periodically refresh devices cache using ubnt_discover_output + normalize_ubnt_devices */
 static void *devices_cache_worker(void *arg) {
