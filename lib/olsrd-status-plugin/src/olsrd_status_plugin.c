@@ -73,6 +73,26 @@ static char *g_admin_key = NULL; /* optional admin key from env or PlParam */
 /* stats */
 static unsigned long g_rl_rate_limited_count = 0;
 
+/* Simple in-memory diagnostics event ring buffer (thread-safe). Stores recent server-side events
+ * such as rate-limit occurrences and admin resets for diagnostics UI.
+ */
+static pthread_mutex_t diag_log_lock = PTHREAD_MUTEX_INITIALIZER;
+#define DIAG_LOG_CAP 256
+struct diag_log_entry {
+  time_t ts;
+  char type[32];
+  char endpoint[128];
+  char client_ip[64];
+  int status;
+  char msg[256];
+};
+static struct diag_log_entry *diag_logs = NULL;
+static size_t diag_logs_head = 0; /* index of oldest entry */
+static size_t diag_logs_count = 0; /* number of entries stored (<= DIAG_LOG_CAP) */
+
+static void diag_log_event(const char *type, const char *endpoint, const char *client_ip, int status, const char *fmt, ...);
+
+
 /* forward declarations for helpers defined later in this file */
 static void send_json(http_request_t *r, const char *json);
 static int get_query_param(http_request_t *r, const char *key, char *out, size_t outlen);
@@ -194,8 +214,76 @@ static int rl_check_and_update(http_request_t *r, const char *endpoint) {
     /* log rate-limited event for diagnostics */
   fprintf(stderr, "[status-plugin] rate-limited: endpoint=%s client=%s\n", endpoint, (r->client_ip[0] != '\0') ? r->client_ip : "-");
     __sync_fetch_and_add(&g_rl_rate_limited_count, 1UL);
+    /* record server-side diagnostic event */
+    diag_log_event("rate_limited", endpoint, r->client_ip, 429, "blocked: less-than-1s since last request");
   }
   return rc;
+}
+
+static void diag_log_event(const char *type, const char *endpoint, const char *client_ip, int status, const char *fmt, ...) {
+  if (!type) return;
+  pthread_mutex_lock(&diag_log_lock);
+  if (!diag_logs) {
+    diag_logs = calloc(DIAG_LOG_CAP, sizeof(*diag_logs));
+    if (!diag_logs) { pthread_mutex_unlock(&diag_log_lock); return; }
+    diag_logs_head = 0; diag_logs_count = 0;
+  }
+  size_t idx;
+  if (diag_logs_count < DIAG_LOG_CAP) {
+    idx = (diag_logs_head + diag_logs_count) % DIAG_LOG_CAP;
+    diag_logs_count++;
+  } else {
+    idx = diag_logs_head;
+    diag_logs_head = (diag_logs_head + 1) % DIAG_LOG_CAP;
+  }
+  diag_logs[idx].ts = time(NULL);
+  strncpy(diag_logs[idx].type, type, sizeof(diag_logs[idx].type)-1);
+  diag_logs[idx].type[sizeof(diag_logs[idx].type)-1] = '\0';
+  if (endpoint) strncpy(diag_logs[idx].endpoint, endpoint, sizeof(diag_logs[idx].endpoint)-1); else diag_logs[idx].endpoint[0]=0;
+  diag_logs[idx].endpoint[sizeof(diag_logs[idx].endpoint)-1] = '\0';
+  if (client_ip) strncpy(diag_logs[idx].client_ip, client_ip, sizeof(diag_logs[idx].client_ip)-1); else diag_logs[idx].client_ip[0]=0;
+  diag_logs[idx].client_ip[sizeof(diag_logs[idx].client_ip)-1] = '\0';
+  diag_logs[idx].status = status;
+  if (fmt) {
+    va_list ap; va_start(ap, fmt); vsnprintf(diag_logs[idx].msg, sizeof(diag_logs[idx].msg), fmt, ap); va_end(ap);
+    diag_logs[idx].msg[sizeof(diag_logs[idx].msg)-1] = '\0';
+  } else {
+    diag_logs[idx].msg[0] = '\0';
+  }
+  pthread_mutex_unlock(&diag_log_lock);
+}
+
+/* HTTP handler returning recent diagnostics events as JSON array */
+static int h_diagnostics_logs(http_request_t *r) {
+  pthread_mutex_lock(&diag_log_lock);
+  size_t n = diag_logs_count;
+  size_t cap = 4096 + n * 256;
+  char *buf = malloc(cap);
+  if (!buf) { pthread_mutex_unlock(&diag_log_lock); send_json(r, "[]\n"); return 0; }
+  size_t len = 0;
+  int ret = snprintf(buf + len, cap - len, "[");
+  if (ret < 0) { free(buf); pthread_mutex_unlock(&diag_log_lock); send_json(r, "[]\n"); return 0; }
+  len += (size_t)ret;
+  for (size_t i = 0; i < n; ++i) {
+    size_t idx = (diag_logs_head + i) % DIAG_LOG_CAP;
+    struct diag_log_entry *e = &diag_logs[idx];
+    /* estimate required and realloc if necessary */
+    size_t need = 300 + strlen(e->type) + strlen(e->endpoint) + strlen(e->client_ip) + strlen(e->msg);
+    if (cap - len < need) {
+      size_t newcap = cap * 2 + need;
+      char *nb = realloc(buf, newcap);
+      if (!nb) break; buf = nb; cap = newcap;
+    }
+    if (i) { ret = snprintf(buf + len, cap - len, ","); if (ret < 0) break; len += (size_t)ret; }
+    ret = snprintf(buf + len, cap - len, "{\"ts\":%ld,\"type\":\"%s\",\"endpoint\":\"%s\",\"client_ip\":\"%s\",\"status\":%d,\"msg\":\"%s\"}", (long)e->ts, e->type, e->endpoint, e->client_ip, e->status, e->msg[0]?e->msg:"");
+    if (ret < 0) break; len += (size_t)ret;
+  }
+  if (cap - len < 4) { char *nb = realloc(buf, cap + 64); if (nb) { buf = nb; cap += 64; } }
+  snprintf(buf + len, cap - len, "]\n");
+  pthread_mutex_unlock(&diag_log_lock);
+  send_json(r, buf);
+  free(buf);
+  return 0;
 }
 
 /* admin reset: if client supplies correct key, bump rl_global_epoch (global reset) or bump single client by inserting new epoch */
@@ -6593,6 +6681,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/fetch_metrics", &h_fetch_metrics);
   http_server_register_handler("/fetch_debug", &h_fetch_debug);
   http_server_register_handler("/diagnostics.json", &h_diagnostics_json);
+  http_server_register_handler("/diagnostics/logs.json", &h_diagnostics_logs);
   http_server_register_handler("/platform.json", &h_platform_json);
   http_server_register_handler("/log", &h_log);
   http_server_register_handler("/traceroute", &h_traceroute);
