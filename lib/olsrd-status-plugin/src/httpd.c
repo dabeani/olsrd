@@ -148,6 +148,16 @@ static int addr_prefix_match(const struct in6_addr *a, const struct in6_addr *b,
 
 int http_is_client_allowed(const char *client_ip) {
   if (!client_ip) return 0;
+  /* Always allow local loopback addresses regardless of allow-list.
+   * Accept common forms: 127.0.0.1 (IPv4), ::1 (IPv6), and IPv4-mapped IPv6 ::ffff:127.0.0.1
+   */
+  if (strcmp(client_ip, "127.0.0.1") == 0) return 1;
+  if (strcmp(client_ip, "::1") == 0) return 1;
+  /* Accept both lower-case and upper-case mapped forms, and addresses with prefixing */
+  if (strstr(client_ip, "127.0.0.1") != NULL) {
+    /* catches '::ffff:127.0.0.1' and similar */
+    return 1;
+  }
   if (!g_allowed) return 1; /* no restrictions */
   struct in6_addr a; if (strchr(client_ip,':')) {
     if (inet_pton(AF_INET6, client_ip, &a) != 1) return 0;
