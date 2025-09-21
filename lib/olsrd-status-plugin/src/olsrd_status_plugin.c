@@ -567,44 +567,7 @@ static void get_primary_ipv4(char *out, size_t outlen);
 static int buffer_has_content(const char *b, size_t n);
 static int validate_nodedb_json(const char *buf, size_t len);
 
-/* Small helper: append formatted text directly into growing buffer to avoid asprintf churn */
-static int json_appendf(char **bufptr, size_t *lenptr, size_t *capptr, const char *fmt, ...) {
-  if (!bufptr || !lenptr || !capptr || !fmt) return -1;
-  va_list ap;
-  va_start(ap, fmt);
-  va_list ap2;
-  va_copy(ap2, ap);
-#if defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wformat-nonliteral"
-#endif
-  int needed = vsnprintf(NULL, 0, fmt, ap2);
-#if defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
-  va_end(ap2);
-  if (needed < 0) { va_end(ap); return -1; }
-  size_t need_total = *lenptr + (size_t)needed + 1;
-  if (need_total > *capptr) {
-    size_t nc = *capptr ? *capptr : 1024;
-    while (nc < need_total) nc *= 2;
-    char *nb = realloc(*bufptr, nc);
-    if (!nb) { va_end(ap); return -1; }
-    *bufptr = nb; *capptr = nc;
-  }
-#if defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wformat-nonliteral"
-#endif
-  vsnprintf((*bufptr) + *lenptr, (size_t)needed + 1, fmt, ap);
-#if defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
-  *lenptr += (size_t)needed;
-  (*bufptr)[*lenptr] = '\0';
-  va_end(ap);
-  return 0;
-}
+/* json_appendf is provided by json_helpers.h (inline) */
 
 /*
  * Extract the first top-level JSON value (object or array) from a noisy input string.
@@ -1182,75 +1145,8 @@ static long get_uptime_seconds(void) {
   return up;
 }
 
-/* JSON buffer helpers used by h_status and other responders */
-static int json_buf_append(char **bufptr, size_t *lenptr, size_t *capptr, const char *fmt, ...) {
-  va_list ap; char *t = NULL; int n;
-  va_start(ap, fmt);
-#if defined(_GNU_SOURCE) || defined(__GNU__)
-#if defined(__GNUC__)
-  _Pragma("GCC diagnostic push");
-  _Pragma("GCC diagnostic ignored \"-Wformat-nonliteral\"");
-#endif
-  n = vasprintf(&t, fmt, ap);
-#if defined(__GNUC__)
-  _Pragma("GCC diagnostic pop");
-#endif
-#else
-  /* fallback: estimate with a stack buffer */
-  char _tmpbuf[1024];
-  n = vsnprintf(_tmpbuf, sizeof(_tmpbuf), fmt, ap);
-  if (n >= 0) {
-    t = malloc((size_t)n + 1);
-    if (t) memcpy(t, _tmpbuf, (size_t)n + 1);
-  }
-#endif
-  va_end(ap);
-  if (n < 0 || !t) return -1;
-  const size_t MAX_JSON_BUF = 2 * 1024 * 1024; /* 2 MiB */
-  if (*lenptr + (size_t)n + 1 > *capptr) {
-    while (*capptr < *lenptr + (size_t)n + 1) {
-      size_t next = *capptr * 2;
-      if (next > MAX_JSON_BUF) next = MAX_JSON_BUF;
-      if (next <= *capptr) { free(t); return -1; }
-      *capptr = next;
-    }
-    if (*capptr > MAX_JSON_BUF) { free(t); return -1; }
-    char *nb = (char*)realloc(*bufptr, *capptr);
-    if (!nb) { free(t); return -1; }
-    *bufptr = nb;
-  }
-  memcpy(*bufptr + *lenptr, t, (size_t)n);
-  *lenptr += (size_t)n; (*bufptr)[*lenptr] = 0;
-  free(t);
-  return 0;
-}
-
-static int json_append_escaped(char **bufptr, size_t *lenptr, size_t *capptr, const char *s) {
-  if (!s) { return json_buf_append(bufptr, lenptr, capptr, "\"\""); }
-  if (json_buf_append(bufptr, lenptr, capptr, "\"") < 0) return -1;
-  const unsigned char *p = (const unsigned char*)s;
-  for (; *p; ++p) {
-    unsigned char c = *p;
-    switch (c) {
-      case '"': if (json_buf_append(bufptr, lenptr, capptr, "\\\"") < 0) return -1; break;
-      case '\\': if (json_buf_append(bufptr, lenptr, capptr, "\\\\") < 0) return -1; break;
-      case '\b': if (json_buf_append(bufptr, lenptr, capptr, "\\b") < 0) return -1; break;
-      case '\f': if (json_buf_append(bufptr, lenptr, capptr, "\\f") < 0) return -1; break;
-      case '\n': if (json_buf_append(bufptr, lenptr, capptr, "\\n") < 0) return -1; break;
-      case '\r': if (json_buf_append(bufptr, lenptr, capptr, "\\r") < 0) return -1; break;
-      case '\t': if (json_buf_append(bufptr, lenptr, capptr, "\\t") < 0) return -1; break;
-      default:
-        if (c < 0x20) {
-          if (json_buf_append(bufptr, lenptr, capptr, "\\u%04x", c) < 0) return -1;
-        } else {
-          char t[2] = { (char)c, 0 };
-          if (json_buf_append(bufptr, lenptr, capptr, "%s", t) < 0) return -1;
-        }
-    }
-  }
-  if (json_buf_append(bufptr, lenptr, capptr, "\"") < 0) return -1;
-  return 0;
-}
+/* use shared JSON helpers */
+#include "json_helpers.h"
 
 /* --- Helper counters for OLSR link enrichment --- */
 static int find_json_string_value(const char *start, const char *key, char **val, size_t *val_len); /* forward */
@@ -3045,19 +2941,22 @@ static int h_status(http_request_t *r) {
   if(!olsrd_on && !olsr2_on) fprintf(stderr,"[status-plugin] no OLSR process detected (robust path)\n");
 
   /* fetch links (for either implementation); do not toggle olsr2_on based on HTTP success */
-  char *olsr_links_raw=NULL; size_t oln=0; {
+  char *olsr_links_raw=NULL; size_t oln=0; char selected_olsr_ep[256] = ""; {
     const char *endpoints[]={"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
     for(const char **ep=endpoints; *ep && !olsr_links_raw; ++ep){
       fprintf(stderr,"[status-plugin] trying OLSR endpoint: %s\n", *ep);
       if (strstr(*ep, "127.0.0.1") || strstr(*ep, "localhost")) {
         if (util_http_get_url_local(*ep, &olsr_links_raw, &oln, 1) == 0 && olsr_links_raw && oln > 0) {
           fprintf(stderr,"[status-plugin] fetched OLSR links from %s (%zu bytes)\n", *ep, oln);
+          /* remember which endpoint succeeded so we can query routes/topology on the same base */
+          snprintf(selected_olsr_ep, sizeof(selected_olsr_ep), "%s", *ep);
           break;
         }
       } else {
         char cmd[256]; snprintf(cmd,sizeof(cmd),"/usr/bin/curl -s --max-time 1 %s", *ep);
         if(util_exec(cmd,&olsr_links_raw,&oln)==0 && olsr_links_raw && oln>0){
           fprintf(stderr,"[status-plugin] fetched OLSR links from %s (%zu bytes)\n", *ep, oln);
+          snprintf(selected_olsr_ep, sizeof(selected_olsr_ep), "%s", *ep);
           break;
         }
       }
@@ -3067,7 +2966,15 @@ static int h_status(http_request_t *r) {
 
   /* (legacy duplicate fetch block removed after refactor) */
 
-  char *olsr_neighbors_raw=NULL; size_t olnn=0; if(util_http_get_url_local("http://127.0.0.1:9090/neighbors", &olsr_neighbors_raw, &olnn, 1) != 0) { if(olsr_neighbors_raw){ free(olsr_neighbors_raw); olsr_neighbors_raw=NULL; } olnn=0; }
+  char *olsr_neighbors_raw=NULL; size_t olnn=0;
+  /* Prefer neighbors endpoint on the same base that served links earlier; fall back to 127.0.0.1:9090 */
+  if (selected_olsr_ep[0]) {
+    /* build base (scheme://host:port) from selected_olsr_ep */
+    char base[256] = ""; const char *u = selected_olsr_ep; const char *p = strstr(u, "://"); if (p) p += 3; else p = u; const char *slash = strchr(p, '/'); size_t baselen = slash ? (size_t)(slash - u) : strlen(u); if (baselen >= sizeof(base)) baselen = sizeof(base)-1; memcpy(base, u, baselen); base[baselen] = '\0';
+    char nb[320]; snprintf(nb, sizeof(nb), "%s/neighbors", base);
+    if (util_http_get_url_local(nb, &olsr_neighbors_raw, &olnn, 1) != 0) { if(olsr_neighbors_raw){ free(olsr_neighbors_raw); olsr_neighbors_raw=NULL; } olnn=0; }
+  }
+  if (!olsr_neighbors_raw && util_http_get_url_local("http://127.0.0.1:9090/neighbors", &olsr_neighbors_raw, &olnn, 1) != 0) { if(olsr_neighbors_raw){ free(olsr_neighbors_raw); olsr_neighbors_raw=NULL; } olnn=0; }
   /* If olsrd2 is running and the default neighbor endpoint returned nothing,
    * try the telnet bridge endpoints that some olsrd2 builds expose (used by
    * bmk-webstatus.py). Prefer JSON output when available.
@@ -3087,8 +2994,17 @@ static int h_status(http_request_t *r) {
       } else { if (tmp) { fprintf(stderr, "[status-plugin] telnet nhdpinfo neighbor failed or empty\n"); free(tmp); tmp = NULL; tlen = 0; } }
     }
   }
-  char *olsr_routes_raw=NULL; size_t olr=0; if(util_http_get_url_local("http://127.0.0.1:9090/routes", &olsr_routes_raw, &olr, 1) != 0) { if(olsr_routes_raw){ free(olsr_routes_raw); olsr_routes_raw=NULL; } olr=0; }
-  char *olsr_topology_raw=NULL; size_t olt=0; if(util_http_get_url_local("http://127.0.0.1:9090/topology", &olsr_topology_raw, &olt, 1) != 0) { if(olsr_topology_raw){ free(olsr_topology_raw); olsr_topology_raw=NULL; } olt=0; }
+  char *olsr_routes_raw=NULL; size_t olr=0; char *olsr_topology_raw=NULL; size_t olt=0;
+  /* Try fetching routes/topology from same base as links (if known), otherwise fall back to 127.0.0.1:9090 */
+  if (selected_olsr_ep[0]) {
+    char base[256] = ""; const char *u = selected_olsr_ep; const char *p = strstr(u, "://"); if (p) p += 3; else p = u; const char *slash = strchr(p, '/'); size_t baselen = slash ? (size_t)(slash - u) : strlen(u); if (baselen >= sizeof(base)) baselen = sizeof(base)-1; memcpy(base, u, baselen); base[baselen] = '\0';
+    char rb[320]; snprintf(rb, sizeof(rb), "%s/routes", base);
+    char tb[320]; snprintf(tb, sizeof(tb), "%s/topology", base);
+    if (util_http_get_url_local(rb, &olsr_routes_raw, &olr, 1) != 0) { if(olsr_routes_raw){ free(olsr_routes_raw); olsr_routes_raw=NULL; } olr=0; }
+    if (util_http_get_url_local(tb, &olsr_topology_raw, &olt, 1) != 0) { if(olsr_topology_raw){ free(olsr_topology_raw); olsr_topology_raw=NULL; } olt=0; }
+  }
+  if (!olsr_routes_raw) { if(util_http_get_url_local("http://127.0.0.1:9090/routes", &olsr_routes_raw, &olr, 1) != 0) { if(olsr_routes_raw){ free(olsr_routes_raw); olsr_routes_raw=NULL; } olr=0; } }
+  if (!olsr_topology_raw) { if(util_http_get_url_local("http://127.0.0.1:9090/topology", &olsr_topology_raw, &olt, 1) != 0) { if(olsr_topology_raw){ free(olsr_topology_raw); olsr_topology_raw=NULL; } olt=0; } }
 
   /* Build JSON */
   APPEND("\"hostname\":"); json_append_escaped(&buf,&len,&cap,hostname); APPEND(",");

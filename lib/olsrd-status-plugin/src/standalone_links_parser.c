@@ -10,65 +10,8 @@
  * other files and declared there as well. */
 int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen);
 
-/* Minimal dynamic JSON buffer helpers */
-static int json_buf_append(char **bufptr, size_t *lenptr, size_t *capptr, const char *fmt, ...) {
-  va_list ap; char *t = NULL; int n;
-  va_start(ap, fmt);
-#if defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wformat-nonliteral"
-#endif
-  n = vasprintf(&t, fmt, ap);
-#if defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
-  va_end(ap);
-  if (n < 0 || !t) return -1;
-  if (*bufptr == NULL) {
-    *capptr = (size_t)n + 128;
-    *bufptr = malloc(*capptr);
-    if (!*bufptr) { free(t); return -1; }
-    (*bufptr)[0] = '\0'; *lenptr = 0;
-  }
-  if (*lenptr + (size_t)n + 1 > *capptr) {
-    size_t need = *lenptr + (size_t)n + 1;
-    size_t nc = *capptr * 2;
-    if (nc < need) nc = need + 128;
-    char *nb = realloc(*bufptr, nc);
-    if (!nb) { free(t); return -1; }
-    *bufptr = nb; *capptr = nc;
-  }
-  memcpy(*bufptr + *lenptr, t, (size_t)n);
-  *lenptr += (size_t)n; (*bufptr)[*lenptr] = '\0';
-  free(t);
-  return 0;
-}
-
-static int json_append_escaped(char **bufptr, size_t *lenptr, size_t *capptr, const char *s) {
-  if (!s) return json_buf_append(bufptr, lenptr, capptr, "\"\"");
-  if (json_buf_append(bufptr, lenptr, capptr, "\"") < 0) return -1;
-  for (const unsigned char *p = (const unsigned char*)s; *p; ++p) {
-    unsigned char c = *p;
-    switch (c) {
-      case '"': if (json_buf_append(bufptr,lenptr,capptr,"\\\"")<0) return -1; break;
-      case '\\': if (json_buf_append(bufptr,lenptr,capptr,"\\\\")<0) return -1; break;
-      case '\b': if (json_buf_append(bufptr,lenptr,capptr,"\\b")<0) return -1; break;
-      case '\f': if (json_buf_append(bufptr,lenptr,capptr,"\\f")<0) return -1; break;
-      case '\n': if (json_buf_append(bufptr,lenptr,capptr,"\\n")<0) return -1; break;
-      case '\r': if (json_buf_append(bufptr,lenptr,capptr,"\\r")<0) return -1; break;
-      case '\t': if (json_buf_append(bufptr,lenptr,capptr,"\\t")<0) return -1; break;
-      default:
-        if (c < 0x20) {
-          if (json_buf_append(bufptr,lenptr,capptr,"\\u%04x", c)<0) return -1;
-        } else {
-          char t[2] = { (char)c, 0 };
-          if (json_buf_append(bufptr,lenptr,capptr, "%s", t) < 0) return -1;
-        }
-    }
-  }
-  if (json_buf_append(bufptr, lenptr, capptr, "\"") < 0) return -1;
-  return 0;
-}
+/* use shared JSON helpers */
+#include "json_helpers.h"
 
 /* strip simple HTML tags: keep inner text of <...>text</...> or cut at '<' */
 static void strip_tags_and_trim(char *s) {
