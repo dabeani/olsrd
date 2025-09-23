@@ -3165,8 +3165,8 @@ static int util_http_get_olsr2_local(const char *command, char **out, size_t *ou
   if (tmp) { free(tmp); tmp = NULL; tlen = 0; }
 
   /* Simple fallback: if asking for nhdpinfo link, try nhdpinfo neighbor */
-  if (strstr(command, "nhdpinfo json link") != NULL) {
-    build_olsr2_url(url, sizeof(url), "nhdpinfo json neighbor");
+  if (strstr(command, "nhdpinfo link") != NULL) {
+    build_olsr2_url(url, sizeof(url), "nhdpinfo neighbor");
     if (util_http_get_url_local(url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0 && !is_html_error(tmp, tlen)) {
       *out = tmp; *out_n = tlen; return 0;
     }
@@ -3300,16 +3300,16 @@ static int h_status(http_request_t *r) {
   if (olsr2_on) {
   /* olsr2_url not needed here; util_http_get_olsr2_local builds URLs */
   /* Get OLSR2 version */
-  if (util_http_get_olsr2_local("systeminfo json version", &olsr2_version_raw, &olsr2_version_n) != 0) { olsr2_version_raw = NULL; olsr2_version_n = 0; }
+  if (util_http_get_olsr2_local("systeminfo version", &olsr2_version_raw, &olsr2_version_n) != 0) { olsr2_version_raw = NULL; olsr2_version_n = 0; }
 
     /* Get OLSR2 time */
-  if (util_http_get_olsr2_local("systeminfo json time", &olsr2_time_raw, &olsr2_time_n) != 0) { olsr2_time_raw = NULL; olsr2_time_n = 0; }
+  if (util_http_get_olsr2_local("systeminfo time", &olsr2_time_raw, &olsr2_time_n) != 0) { olsr2_time_raw = NULL; olsr2_time_n = 0; }
 
     /* Get OLSR2 originator */
-  if (util_http_get_olsr2_local("olsrv2info json originator", &olsr2_originator_raw, &olsr2_originator_n) != 0) { olsr2_originator_raw = NULL; olsr2_originator_n = 0; }
+  if (util_http_get_olsr2_local("olsrv2info originator", &olsr2_originator_raw, &olsr2_originator_n) != 0) { olsr2_originator_raw = NULL; olsr2_originator_n = 0; }
 
     /* Get OLSR2 neighbors */
-  if (util_http_get_olsr2_local("nhdpinfo json link", &olsr2_neighbors_raw, &olsr2_neighbors_n) != 0) { olsr2_neighbors_raw = NULL; olsr2_neighbors_n = 0; }
+  if (util_http_get_olsr2_local("nhdpinfo link", &olsr2_neighbors_raw, &olsr2_neighbors_n) != 0) { olsr2_neighbors_raw = NULL; olsr2_neighbors_n = 0; }
 
     /* Get IPv6 routing table */
     util_exec("/sbin/ip -6 r l proto 100 | grep -v 'default' | awk '{print $3,$1,$5}'", &olsr2_routing6_raw, &olsr2_routing6_n);
@@ -3987,8 +3987,22 @@ static int h_status_lite(http_request_t *r) {
     APP_L("\"httpd_stats\":{\"conn_pool_len\":%d,\"task_count\":%d,\"pool_enabled\":%d,\"pool_size\":%d},", _cp_len, _task_count, _pool_enabled, _pool_size);
   }
   /* default route */
+  /* detect olsr2 for default route preference */
+  int dummy, lite_olsr2_on_local = 0;
+  detect_olsr_processes(&dummy, &lite_olsr2_on_local);
   char def_ip[64]="", def_dev[64]="", def_hostname[256]="";
+  /* prefer IPv4 default by default */
   get_default_ipv4_route(def_ip, sizeof(def_ip), def_dev, sizeof(def_dev));
+  /* If olsr2 is running, attempt to also detect an IPv6 default and prefer it */
+  if (lite_olsr2_on_local) {
+    char def6_ip[128] = ""; char def6_dev[64] = "";
+    get_default_ipv6_route(def6_ip, sizeof(def6_ip), def6_dev, sizeof(def6_dev));
+    /* prefer IPv6 default when olsr2 is present */
+    if (def6_ip[0]) {
+      strncpy(def_ip, def6_ip, sizeof(def_ip)-1); def_ip[sizeof(def_ip)-1]=0;
+      if (def6_dev[0]) { strncpy(def_dev, def6_dev, sizeof(def_dev)-1); def_dev[sizeof(def_dev)-1]=0; }
+    }
+  }
 
   if (def_ip[0]) {
     struct in_addr ina;
@@ -4163,16 +4177,16 @@ static int h_status_lite(http_request_t *r) {
   if (lite_olsr2_on) {
   /* olsr2_url not needed here; util_http_get_olsr2_local builds URLs */
   /* Get OLSR2 version */
-  if (util_http_get_olsr2_local("systeminfo json version", &lite_olsr2_version_raw, &lite_olsr2_version_n) != 0) { lite_olsr2_version_raw = NULL; lite_olsr2_version_n = 0; }
+  if (util_http_get_olsr2_local("systeminfo version", &lite_olsr2_version_raw, &lite_olsr2_version_n) != 0) { lite_olsr2_version_raw = NULL; lite_olsr2_version_n = 0; }
 
     /* Get OLSR2 time */
-  if (util_http_get_olsr2_local("systeminfo json time", &lite_olsr2_time_raw, &lite_olsr2_time_n) != 0) { lite_olsr2_time_raw = NULL; lite_olsr2_time_n = 0; }
+  if (util_http_get_olsr2_local("systeminfo time", &lite_olsr2_time_raw, &lite_olsr2_time_n) != 0) { lite_olsr2_time_raw = NULL; lite_olsr2_time_n = 0; }
 
     /* Get OLSR2 originator */
-  if (util_http_get_olsr2_local("olsrv2info json originator", &lite_olsr2_originator_raw, &lite_olsr2_originator_n) != 0) { lite_olsr2_originator_raw = NULL; lite_olsr2_originator_n = 0; }
+  if (util_http_get_olsr2_local("olsrv2info originator", &lite_olsr2_originator_raw, &lite_olsr2_originator_n) != 0) { lite_olsr2_originator_raw = NULL; lite_olsr2_originator_n = 0; }
 
     /* Get OLSR2 neighbors */
-  if (util_http_get_olsr2_local("nhdpinfo json link", &lite_olsr2_neighbors_raw, &lite_olsr2_neighbors_n) != 0) { lite_olsr2_neighbors_raw = NULL; lite_olsr2_neighbors_n = 0; }
+  if (util_http_get_olsr2_local("nhdpinfo link", &lite_olsr2_neighbors_raw, &lite_olsr2_neighbors_n) != 0) { lite_olsr2_neighbors_raw = NULL; lite_olsr2_neighbors_n = 0; }
   }
 
   if (lite_olsr2_version_raw && lite_olsr2_version_n > 0) {
