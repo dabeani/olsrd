@@ -4188,7 +4188,11 @@ static int h_status_lite(http_request_t *r) {
   }
 
   if (lite_olsr2_version_raw && lite_olsr2_version_n > 0) {
-    APP_L("\"olsr2_version\":%s", lite_olsr2_version_raw);
+    if (is_probably_json(lite_olsr2_version_raw, lite_olsr2_version_n)) {
+      APP_L("\"olsr2_version\":%s", lite_olsr2_version_raw);
+    } else {
+      APP_L("\"olsr2_version\":"); json_append_escaped(&buf,&len,&cap,lite_olsr2_version_raw); APP_L("");
+    }
   } else {
     APP_L("\"olsr2_version\":{}");
   }
@@ -4196,21 +4200,33 @@ static int h_status_lite(http_request_t *r) {
   APP_L(",");
 
   if (lite_olsr2_time_raw && lite_olsr2_time_n > 0) {
-    APP_L("\"olsr2_time\":%s", lite_olsr2_time_raw);
+    if (is_probably_json(lite_olsr2_time_raw, lite_olsr2_time_n)) {
+      APP_L("\"olsr2_time\":%s", lite_olsr2_time_raw);
+    } else {
+      APP_L("\"olsr2_time\":"); json_append_escaped(&buf,&len,&cap,lite_olsr2_time_raw); APP_L("");
+    }
   } else {
     APP_L("\"olsr2_time\":{}");
   }
   APP_L(",");
 
   if (lite_olsr2_originator_raw && lite_olsr2_originator_n > 0) {
-    APP_L("\"olsr2_originator\":%s", lite_olsr2_originator_raw);
+    if (is_probably_json(lite_olsr2_originator_raw, lite_olsr2_originator_n)) {
+      APP_L("\"olsr2_originator\":%s", lite_olsr2_originator_raw);
+    } else {
+      APP_L("\"olsr2_originator\":"); json_append_escaped(&buf,&len,&cap,lite_olsr2_originator_raw); APP_L("");
+    }
   } else {
     APP_L("\"olsr2_originator\":{}");
   }
   APP_L(",");
 
   if (lite_olsr2_neighbors_raw && lite_olsr2_neighbors_n > 0) {
-    APP_L("\"olsr2_neighbors\":%s", lite_olsr2_neighbors_raw);
+    if (is_probably_json(lite_olsr2_neighbors_raw, lite_olsr2_neighbors_n)) {
+      APP_L("\"olsr2_neighbors\":%s", lite_olsr2_neighbors_raw);
+    } else {
+      APP_L("\"olsr2_neighbors\":"); json_append_escaped(&buf,&len,&cap,lite_olsr2_neighbors_raw); APP_L("");
+    }
   } else {
     APP_L("\"olsr2_neighbors\":{}");
   }
@@ -6352,12 +6368,16 @@ static void lookup_hostname_cached(const char *ip, char *out, size_t outlen) {
           size_t copy = vlen < outlen-1 ? vlen : outlen-1; memcpy(out, vptr, copy); out[copy]=0; cache_set(g_host_cache, ip, out); return;
         }
       }
-      /* fallback to "n" */
-      char *npos = strstr(pos, "\"n\":");
-      if (npos) {
-        size_t vlen2 = 0; char *vptr2 = NULL;
-        if (find_json_string_value(npos, "n", &vptr2, &vlen2)) {
-          size_t copy = vlen2 < outlen-1 ? vlen2 : outlen-1; memcpy(out, vptr2, copy); out[copy]=0; cache_set(g_host_cache, ip, out); return;
+      /* fallback to short forms: "n", "h", or generic "host"/"name" */
+      const char *alt_keys[] = { "n", "h", "host", "name", NULL };
+      for (int ki = 0; alt_keys[ki]; ++ki) {
+        char keybuf[16]; snprintf(keybuf, sizeof(keybuf), "\"%s\":" , alt_keys[ki]);
+        char *kpos = strstr(pos, keybuf);
+        if (kpos) {
+          size_t vlen2 = 0; char *vptr2 = NULL;
+          if (find_json_string_value(kpos, alt_keys[ki], &vptr2, &vlen2)) {
+            size_t copy = vlen2 < outlen-1 ? vlen2 : outlen-1; memcpy(out, vptr2, copy); out[copy]=0; cache_set(g_host_cache, ip, out); return;
+          }
         }
       }
       /* fallback: try to get the value directly after the ip key */
