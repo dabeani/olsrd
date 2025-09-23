@@ -411,10 +411,23 @@ typedef struct endpoint_coalesce {
   int              ttl;
 } endpoint_coalesce_t;
 
+struct fetch_req {
+  int force;
+  int wait;
+  int done;
+  int type;
+  pthread_mutex_t m;
+  pthread_cond_t  cv;
+  struct fetch_req *next;
+};
 
-
-
-
+/* Fetch queue globals (plugin-local) */
+static struct fetch_req *g_fetch_q_head = NULL;
+static struct fetch_req *g_fetch_q_tail = NULL;
+static pthread_mutex_t g_fetch_q_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  g_fetch_q_cv = PTHREAD_COND_INITIALIZER;
+static int g_fetch_worker_running = 0;
+static int g_fetch_wait_timeout = 5; /* seconds to wait for deduped requests */
 
 
 /* Ensure UBNT_DEBUG is defined when compiling this translation unit.
@@ -498,7 +511,7 @@ static time_t g_nodedb_last_fetch = 0; /* epoch of last successful fetch */
 static char  *g_nodedb_cached = NULL; /* malloc'ed JSON blob */
 static size_t g_nodedb_cached_len = 0;
 static pthread_mutex_t g_nodedb_lock = PTHREAD_MUTEX_INITIALIZER;
-
+static int g_nodedb_worker_running = 0;
 /* Serialize/coordinate concurrent fetches so multiple callers don't race or
  * spawn duplicate network activity. Callers will wait up to a short timeout
  * for an in-progress fetch to finish.
@@ -544,12 +557,12 @@ static pthread_t g_stderr_thread = 0;
 static int g_stderr_thread_running = 0;
 
 /* Periodic reporter interval (seconds). 0 to disable. Configurable via PlParam 'fetch_report_interval' or env OLSRD_STATUS_FETCH_REPORT_INTERVAL */
-
-
+static int g_fetch_report_interval = 0; /* default: disabled */
+static int g_cfg_fetch_report_set = 0;
 static int g_cfg_fetch_queue_warn_set = 0;
 static int g_cfg_fetch_queue_crit_set = 0;
 static int g_cfg_fetch_dropped_warn_set = 0;
-
+static pthread_t g_fetch_report_thread = 0;
 /* Auto-refresh interval (milliseconds) suggested for UI. 0 means disabled. Can be set via PlParam 'fetch_auto_refresh_ms' or env OLSRD_STATUS_FETCH_AUTO_REFRESH_MS */
 static int g_fetch_auto_refresh_ms = 15000; /* default 15s */
 static int g_cfg_fetch_auto_refresh_set = 0;
@@ -736,7 +749,8 @@ static unsigned long g_metric_unique_nodes = 0;
 
 /* Simple fetch queue structures */
 /* fetch request types (bitmask) */
-
+#define FETCH_TYPE_NODEDB   0x1
+#define FETCH_TYPE_DISCOVER 0x2
 static void endpoint_coalesce_init(endpoint_coalesce_t *e, int ttl) {
   if (!e) return;
   pthread_mutex_init(&e->m, NULL);
@@ -824,34 +838,42 @@ static int g_coalesce_links_ttl = 10;
 /* Debug counters for diagnostics: use C11 atomics when available for lock-free updates */
 #if HAVE_C11_ATOMICS
 static _Atomic unsigned long atom_debug_enqueue_count = 0;
+static _Atomic unsigned long atom_debug_enqueue_count_nodedb = 0;
 static _Atomic unsigned long atom_debug_enqueue_count_discover = 0;
 static _Atomic unsigned long atom_debug_processed_count = 0;
+static _Atomic unsigned long atom_debug_processed_count_nodedb = 0;
 static _Atomic unsigned long atom_debug_processed_count_discover = 0;
 #define DEBUG_INC_ENQUEUED() atomic_fetch_add_explicit(&atom_debug_enqueue_count, 1UL, memory_order_relaxed)
+#define DEBUG_INC_ENQUEUED_NODEDB() atomic_fetch_add_explicit(&atom_debug_enqueue_count_nodedb, 1UL, memory_order_relaxed)
 #define DEBUG_INC_ENQUEUED_DISCOVER() atomic_fetch_add_explicit(&atom_debug_enqueue_count_discover, 1UL, memory_order_relaxed)
 #define DEBUG_INC_PROCESSED() atomic_fetch_add_explicit(&atom_debug_processed_count, 1UL, memory_order_relaxed)
+#define DEBUG_INC_PROCESSED_NODEDB() atomic_fetch_add_explicit(&atom_debug_processed_count_nodedb, 1UL, memory_order_relaxed)
 #define DEBUG_INC_PROCESSED_DISCOVER() atomic_fetch_add_explicit(&atom_debug_processed_count_discover, 1UL, memory_order_relaxed)
 #define DEBUG_LOAD_ALL(e,en,ed,p,pn,pd) do { \
     e = atomic_load_explicit(&atom_debug_enqueue_count, memory_order_relaxed); \
-    en = 0; \
+    en = atomic_load_explicit(&atom_debug_enqueue_count_nodedb, memory_order_relaxed); \
     ed = atomic_load_explicit(&atom_debug_enqueue_count_discover, memory_order_relaxed); \
     p = atomic_load_explicit(&atom_debug_processed_count, memory_order_relaxed); \
-    pn = 0; \
+    pn = atomic_load_explicit(&atom_debug_processed_count_nodedb, memory_order_relaxed); \
     pd = atomic_load_explicit(&atom_debug_processed_count_discover, memory_order_relaxed); \
   } while(0)
 #else
 static unsigned long g_debug_enqueue_count = 0;
+static unsigned long g_debug_enqueue_count_nodedb = 0;
 static unsigned long g_debug_enqueue_count_discover = 0;
 static unsigned long g_debug_processed_count = 0;
+static unsigned long g_debug_processed_count_nodedb = 0;
 static unsigned long g_debug_processed_count_discover = 0;
 #define DEBUG_INC_ENQUEUED() do { pthread_mutex_lock(&g_debug_lock); g_debug_enqueue_count++; pthread_mutex_unlock(&g_debug_lock); } while(0)
+#define DEBUG_INC_ENQUEUED_NODEDB() do { pthread_mutex_lock(&g_debug_lock); g_debug_enqueue_count_nodedb++; pthread_mutex_unlock(&g_debug_lock); } while(0)
 #define DEBUG_INC_ENQUEUED_DISCOVER() do { pthread_mutex_lock(&g_debug_lock); g_debug_enqueue_count_discover++; pthread_mutex_unlock(&g_debug_lock); } while(0)
 #define DEBUG_INC_PROCESSED() do { pthread_mutex_lock(&g_debug_lock); g_debug_processed_count++; pthread_mutex_unlock(&g_debug_lock); } while(0)
+#define DEBUG_INC_PROCESSED_NODEDB() do { pthread_mutex_lock(&g_debug_lock); g_debug_processed_count_nodedb++; pthread_mutex_unlock(&g_debug_lock); } while(0)
 #define DEBUG_INC_PROCESSED_DISCOVER() do { pthread_mutex_lock(&g_debug_lock); g_debug_processed_count_discover++; pthread_mutex_unlock(&g_debug_lock); } while(0)
 #define DEBUG_LOAD_ALL(e,en,ed,p,pn,pd) do { \
     pthread_mutex_lock(&g_debug_lock); \
-    e = g_debug_enqueue_count; en = 0; ed = g_debug_enqueue_count_discover; \
-    p = g_debug_processed_count; pn = 0; pd = g_debug_processed_count_discover; \
+    e = g_debug_enqueue_count; en = g_debug_enqueue_count_nodedb; ed = g_debug_enqueue_count_discover; \
+    p = g_debug_processed_count; pn = g_debug_processed_count_nodedb; pd = g_debug_processed_count_discover; \
     pthread_mutex_unlock(&g_debug_lock); \
   } while(0)
 #endif
@@ -864,8 +886,8 @@ static char g_debug_last_fetch_msg[256] = "";
 #define MAX_FETCH_RETRIES_DEFAULT 3
 #define FETCH_INITIAL_BACKOFF_SEC_DEFAULT 1
 
-
-
+static void enqueue_fetch_request(int force, int wait, int type);
+static void *fetch_worker_thread(void *arg);
 
 /* Devices cache populated by background worker to avoid blocking HTTP handlers */
 static char *g_devices_cache = NULL; /* JSON array string (malloc'd) */
@@ -880,8 +902,9 @@ static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen)
 /* helper removed: transform_devices_to_legacy no longer used */
 
 /* Forward declarations for helpers used by fetch worker */
-
-
+static void get_primary_ipv4(char *out, size_t outlen);
+static int buffer_has_content(const char *b, size_t n);
+static int validate_nodedb_json(const char *buf, size_t len);
 
 /* json_appendf is provided by json_helpers.h (inline) */
 
@@ -953,16 +976,15 @@ static void *status_lite_refresher(void *arg) {
   return NULL;
 }
 
-/* forward declare discovery helper so enqueue implementation can call it synchronously when needed */
-static void fetch_discover_once(void);
-
 /* Worker: periodically refresh devices cache using ubnt_discover_output + normalize_ubnt_devices */
 static void *devices_cache_worker(void *arg) {
   (void)arg;
   g_devices_worker_running = 1;
   while (g_devices_worker_running) {
-    /* Perform discovery and update the devices cache */
-    fetch_discover_once();
+    /* Enqueue a discovery request; let centralized fetch worker perform discovery and update
+     * the devices cache. Non-blocking enqueue so this thread won't stall.
+     */
+    enqueue_fetch_request(0, 0, FETCH_TYPE_DISCOVER);
     /* Sleep for configured discover interval (interruptible when shutting down).
      * Use a 1s granularity loop so shutdown can be responsive.
      */
@@ -979,12 +1001,136 @@ static void start_devices_worker(void) {
   pthread_detach(th);
 }
 
+/* forward declare fetch implementation so workers can call it */
+static void fetch_remote_nodedb(void);
+/* forward declare discovery helper so enqueue implementation can call it synchronously when needed */
+static void fetch_discover_once(void);
+
 /* Nodedb background worker: periodically refresh remote node DB to avoid blocking handlers */
+static void *nodedb_cache_worker(void *arg) {
+  (void)arg;
+  g_nodedb_worker_running = 1;
+  while (g_nodedb_worker_running) {
+    /* Enqueue a forced node DB refresh; let the fetch worker handle the actual network operations
+     * so retries/backoff and metrics apply uniformly.
+     */
+    enqueue_fetch_request(1, 0, FETCH_TYPE_NODEDB);
+    /* Sleep in small increments to allow clean shutdown; total sleep roughly equals TTL or minimum 10s */
+    int total = g_nodedb_ttl > 10 ? g_nodedb_ttl : 10;
+    for (int i = 0; i < total; ++i) { if (!g_nodedb_worker_running) break; sleep(1); }
+  }
+  return NULL;
+}
 
+static void start_nodedb_worker(void) {
+  pthread_t th;
+  pthread_create(&th, NULL, nodedb_cache_worker, NULL);
+  pthread_detach(th);
+  /* start single fetch worker thread */
+  if (!g_fetch_worker_running) {
+    g_fetch_worker_running = 1;
+    pthread_t fth; pthread_create(&fth, NULL, fetch_worker_thread, NULL); pthread_detach(fth);
+  }
+}
 
+/* Periodic reporter thread: prints fetch metrics to stderr every g_fetch_report_interval seconds */
+static void *fetch_reporter(void *arg) {
+  (void)arg;
+  while (g_fetch_report_interval > 0) {
+    sleep(g_fetch_report_interval);
+    if (g_fetch_report_interval <= 0) break;
+    unsigned long d=0, r=0, s=0; METRIC_LOAD_ALL(d, r, s);
+    pthread_mutex_lock(&g_fetch_q_lock);
+    int qlen = 0; struct fetch_req *it = g_fetch_q_head; while (it) { qlen++; it = it->next; }
+    pthread_mutex_unlock(&g_fetch_q_lock);
+  if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] fetch metrics: queued=%d dropped=%lu retries=%lu successes=%lu\n", qlen, d, r, s);
+  }
+  return NULL;
+}
 
+static void enqueue_fetch_request(int force, int wait, int type) {
+  struct fetch_req *rq = calloc(1, sizeof(*rq));
+  if (!rq) return;
+  rq->force = force; rq->wait = wait; rq->done = 0; rq->type = type ? type : FETCH_TYPE_NODEDB; rq->next = NULL;
+  pthread_mutex_init(&rq->m, NULL); pthread_cond_init(&rq->cv, NULL);
 
+  pthread_mutex_lock(&g_fetch_q_lock);
+  /* Simple dedupe: if a pending request already exists that will satisfy this one,
+   * avoid adding a duplicate. A pending force request satisfies non-force requests.
+   */
+  struct fetch_req *iter = g_fetch_q_head; struct fetch_req *found = NULL; int qlen = 0;
+  while (iter) { qlen++; /* only dedupe requests of the same type */
+    if (iter->type == rq->type && (iter->force || force == 0)) { found = iter; break; }
+    iter = iter->next;
+  }
+  if (found) {
+    pthread_mutex_unlock(&g_fetch_q_lock);
+    /* If caller asked to wait, wait on the existing request to complete */
+    if (wait) {
+      pthread_mutex_lock(&found->m);
+      struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_sec += g_fetch_wait_timeout;
+      int wrc = 0;
+      while (!found->done && wrc == 0) {
+        wrc = pthread_cond_timedwait(&found->cv, &found->m, &ts);
+      }
+      if (!found->done) {
+          if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] enqueue: wait timed out after %d seconds for existing request type=%d\n", g_fetch_wait_timeout, found->type);
+        }
+      pthread_mutex_unlock(&found->m);
+    }
+  if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] enqueue: deduped request type=%d force=%d wait=%d\n", rq->type, rq->force, rq->wait);
+  pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
+    return;
+  }
 
+  /* Queue size limiting: if full, either perform a synchronous fetch for waiters or drop the request */
+  if (qlen >= g_fetch_queue_max) {
+  if (wait) {
+      /* Caller requested to block; perform a synchronous fetch inline to satisfy them. */
+      pthread_mutex_unlock(&g_fetch_q_lock);
+  if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] enqueue: queue full, performing synchronous fetch type=%d\n", rq->type);
+  if (rq->type & FETCH_TYPE_DISCOVER) fetch_discover_once(); else fetch_remote_nodedb();
+      pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
+      return;
+    }
+    /* Drop non-waiting requests when the queue is full */
+    METRIC_INC_DROPPED();
+    unsigned long td, tr, ts; METRIC_LOAD_ALL(td, tr, ts);
+  if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] fetch queue full (%d), dropping request (total_dropped=%lu)\n", qlen, td);
+    pthread_mutex_unlock(&g_fetch_q_lock);
+  pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
+    return;
+  }
+
+  /* Accept into queue */
+  if (g_fetch_q_tail) g_fetch_q_tail->next = rq; else g_fetch_q_head = rq;
+  g_fetch_q_tail = rq;
+  /* update enqueue debug counter while holding queue lock */
+  DEBUG_INC_ENQUEUED();
+  if (rq->type & FETCH_TYPE_NODEDB) DEBUG_INC_ENQUEUED_NODEDB();
+  if (rq->type & FETCH_TYPE_DISCOVER) DEBUG_INC_ENQUEUED_DISCOVER();
+  pthread_cond_signal(&g_fetch_q_cv);
+  if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] enqueue: added request type=%d force=%d wait=%d (qlen now=%d)\n", rq->type, rq->force, rq->wait, qlen+1);
+  pthread_mutex_unlock(&g_fetch_q_lock);
+
+  if (wait) {
+    pthread_mutex_lock(&rq->m);
+    struct timespec ts2; clock_gettime(CLOCK_REALTIME, &ts2); ts2.tv_sec += g_fetch_wait_timeout;
+    int wrc2 = 0;
+    while (!rq->done && wrc2 == 0) { wrc2 = pthread_cond_timedwait(&rq->cv, &rq->m, &ts2); }
+    if (!rq->done) {
+      /* Timed out waiting for worker: mark this request as not waited so the worker
+       * will free it when done. Do this while holding rq->m to avoid races. */
+  if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] enqueue: own request wait timed out after %d seconds type=%d\n", g_fetch_wait_timeout, rq->type);
+      rq->wait = 0; /* worker will treat as non-waiting and free */
+      pthread_mutex_unlock(&rq->m);
+      return;
+    }
+    /* Completed: safe to destroy our synchronization primitives and free the request */
+    pthread_mutex_unlock(&rq->m);
+    pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
+  }
+}
 
 /* Perform a single discovery pass (called from fetch worker context). This mirrors the
  * previous inline logic but runs inside the fetch worker so discovery is serialized
@@ -1021,7 +1167,95 @@ static void fetch_discover_once(void) {
   pthread_mutex_unlock(&g_nodedb_fetch_lock);
 }
 
+static void *fetch_worker_thread(void *arg) {
+  (void)arg;
+  while (g_fetch_worker_running) {
+    pthread_mutex_lock(&g_fetch_q_lock);
+    while (!g_fetch_q_head && g_fetch_worker_running) pthread_cond_wait(&g_fetch_q_cv, &g_fetch_q_lock);
+    struct fetch_req *rq = g_fetch_q_head;
+    if (rq) {
+      g_fetch_q_head = rq->next;
+      if (!g_fetch_q_head) g_fetch_q_tail = NULL;
+    }
+    pthread_mutex_unlock(&g_fetch_q_lock);
+    if (!rq) continue;
 
+  /* update processed counters in a thread-safe way */
+  /* increment processed counters (use macros that may be atomic) */
+  DEBUG_INC_PROCESSED();
+  if (rq->type & FETCH_TYPE_NODEDB) DEBUG_INC_PROCESSED_NODEDB();
+  if (rq->type & FETCH_TYPE_DISCOVER) DEBUG_INC_PROCESSED_DISCOVER();
+  /* Only emit verbose queue processing info when logging is enabled. We also
+   * emit a concise success/failure line after the fetch completes if the
+   * operation actually updated the cache or if logging is forced via
+   * g_fetch_log_force. This reduces noise from frequent, successful no-op
+   * fetches when cache is still fresh.
+   */
+  if (g_fetch_log_queue) fprintf(stderr, "[status-plugin] fetch worker: picked request type=%d force=%d wait=%d\n", rq->type, rq->force, rq->wait);
+    /* Process the request: dispatch by type. NodeDB fetch and discovery both use the
+     * same retry/backoff logic so they benefit from the same robustness.
+     */
+    int attempt;
+    int succeeded = 0;
+    for (attempt = 0; attempt < g_fetch_retries; ++attempt) {
+      /* Ensure only one fetch-like action runs at a time (protects shared resources) */
+      pthread_mutex_lock(&g_nodedb_fetch_lock);
+      while (g_nodedb_fetch_in_progress) pthread_cond_wait(&g_nodedb_fetch_cv, &g_nodedb_fetch_lock);
+      g_nodedb_fetch_in_progress = 1;
+      pthread_mutex_unlock(&g_nodedb_fetch_lock);
+
+      if (rq->type & FETCH_TYPE_DISCOVER) {
+        /* discovery action */
+        time_t prev = g_devices_cache_ts;
+        fetch_discover_once();
+        if (g_devices_cache_ts > prev) { succeeded = 1; break; }
+      } else {
+        /* default: node_db fetch */
+        time_t prev = g_nodedb_last_fetch;
+        fetch_remote_nodedb();
+        if (g_nodedb_last_fetch > prev) { succeeded = 1; break; }
+      }
+
+      /* Backoff before next attempt (if any) */
+      METRIC_INC_RETRIES();
+      if (attempt + 1 < g_fetch_retries) sleep(g_fetch_backoff_initial << attempt);
+    }
+
+    if (succeeded) { METRIC_INC_SUCCESS(); }
+
+    /* Emit a concise post-fetch line only when the fetch actually succeeded
+     * (i.e., updated the cached data) or when fetch logging is forcibly
+     * enabled. This keeps normal periodic refreshes quiet while preserving
+     * visibility when something changes or when troubleshooting is needed.
+     */
+  if ((succeeded && g_fetch_log_queue) || g_fetch_log_force) {
+      if (rq->type & FETCH_TYPE_DISCOVER) {
+        if (succeeded)
+          fprintf(stderr, "[status-plugin] fetch: discovery updated devices cache (ts=%ld)\n", (long)g_devices_cache_ts);
+        else
+          fprintf(stderr, "[status-plugin] fetch: discovery completed (no change)\n");
+      } else {
+        if (succeeded)
+          fprintf(stderr, "[status-plugin] fetch: node DB updated (ts=%ld)\n", (long)g_nodedb_last_fetch);
+        else
+          fprintf(stderr, "[status-plugin] fetch: node DB fetch completed (no change)\n");
+      }
+    }
+
+  /* Notify any waiter(s) attached to this request */
+    pthread_mutex_lock(&rq->m);
+    rq->done = 1;
+    pthread_cond_broadcast(&rq->cv);
+    pthread_mutex_unlock(&rq->m);
+
+    /* If caller didn't wait, the worker is responsible for freeing the request */
+    if (!rq->wait) {
+      pthread_mutex_destroy(&rq->m); pthread_cond_destroy(&rq->cv); free(rq);
+    }
+    /* otherwise the creator will free after being signaled */
+  }
+  return NULL;
+}
 
 /* Minimal SIGSEGV handler that logs a backtrace to stderr then exits. */
 static void sigsegv_handler(int sig) {
@@ -1086,7 +1320,7 @@ static int h_capabilities_local(http_request_t *r);
 static int h_olsrd(http_request_t *r);
 static int h_discover(http_request_t *r); static int h_discover_ubnt(http_request_t *r); static int h_embedded_appjs(http_request_t *r); static int h_emb_jquery(http_request_t *r); static int h_emb_bootstrap(http_request_t *r);
 static int h_connections(http_request_t *r); static int h_connections_json(http_request_t *r);
-static int h_airos(http_request_t *r); static int h_traffic(http_request_t *r); static int h_versions_json(http_request_t *r);
+static int h_airos(http_request_t *r); static int h_traffic(http_request_t *r); static int h_versions_json(http_request_t *r); static int h_nodedb(http_request_t *r);
 static int h_platform_json(http_request_t *r);
 static int h_fetch_metrics(http_request_t *r);
 static int h_prometheus_metrics(http_request_t *r);
@@ -1100,7 +1334,11 @@ static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen)
 /* forward declaration removed: transform_devices_to_legacy is deleted */
 
 /* helper: return 1 if buffer contains any non-whitespace byte */
-
+static int buffer_has_content(const char *b, size_t n) {
+  if (!b || n == 0) return 0;
+  for (size_t i = 0; i < n; i++) if (!isspace((unsigned char)b[i])) return 1;
+  return 0;
+}
 
 /* Format uptime in a human-friendly short form to match bmk-webstatus.py semantics.
  * Examples: "30sek", "5min", "3h", "2d"
@@ -1697,11 +1935,16 @@ static int get_arp_json_cached(char **out, size_t *outlen) {
 }
 
 /* Obtain primary non-loopback IPv4 (best effort). */
-
+static void get_primary_ipv4(char *out, size_t outlen){ if(out&&outlen) out[0]=0; struct ifaddrs *ifap=NULL,*ifa=NULL; if(getifaddrs(&ifap)==0){ for(ifa=ifap; ifa; ifa=ifa->ifa_next){ if(ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_INET){ struct sockaddr_in sa; memcpy(&sa,ifa->ifa_addr,sizeof(sa)); char b[INET_ADDRSTRLEN]; if(inet_ntop(AF_INET,&sa.sin_addr,b,sizeof(b))){ if(strcmp(b,"127.0.0.1")!=0){ snprintf(out,outlen,"%s",b); break; } } } } freeifaddrs(ifap);} }
 
 /* Very lightweight validation that node_db json has object form & expected keys */
+static int validate_nodedb_json(const char *buf, size_t len){ if(!buf||len==0) return 0; /* skip leading ws */ size_t i=0; while(i<len && (buf[i]==' '||buf[i]=='\n'||buf[i]=='\r'||buf[i]=='\t')) i++; if(i>=len) return 0; if(buf[i] != '{') return 0; /* look for some indicative keys */ if(strstr(buf,"\"v6-to-v4\"")||strstr(buf,"\"v6-to-id\"")||strstr(buf,"\"v6-hna-at\"")) return 1; if(strstr(buf,"\"n\"")) return 1; return 1; }
+
 /* Fetch remote node_db and update cache */
 /* TTL-aware wrapper: only fetch if cache is stale or empty */
+/* forward-declare actual fetch implementation so wrapper can call it */
+static void fetch_remote_nodedb(void);
+
 /* Helper used by libcurl to collect response data into a growing buffer */
 #ifdef HAVE_LIBCURL
 struct curl_fetch {
@@ -1723,14 +1966,353 @@ static size_t curl_write_cb(void *ptr, size_t size, size_t nmemb, void *userdata
 #endif
 
 /* RFC1123 time formatter for HTTP Last-Modified header */
+static void format_rfc1123_time(time_t t, char *out, size_t outlen) {
+  if (!out || outlen==0) return;
+  struct tm tm;
+  if (gmtime_r(&t, &tm) == NULL) { out[0]=0; return; }
+  /* Example: Sun, 06 Nov 1994 08:49:37 GMT */
+  strftime(out, outlen, "%a, %d %b %Y %H:%M:%S GMT", &tm);
+}
 
+static void fetch_remote_nodedb_if_needed(void) {
+  time_t now = time(NULL);
+  pthread_mutex_lock(&g_nodedb_lock);
+  int need = 0;
+  if (!g_nodedb_cached || g_nodedb_cached_len == 0) need = 1;
+  else if (g_nodedb_last_fetch == 0) need = 1;
+  else if ((now - g_nodedb_last_fetch) >= g_nodedb_ttl) need = 1;
+  pthread_mutex_unlock(&g_nodedb_lock);
+  if (!need) return;
+  /* enqueue an asynchronous fetch request (do not block caller) */
+  enqueue_fetch_request(0, 0, FETCH_TYPE_NODEDB);
+}
 
+static void fetch_remote_nodedb(void) {
+  char ipbuf[128]=""; get_primary_ipv4(ipbuf,sizeof(ipbuf)); if(!ipbuf[0]) snprintf(ipbuf,sizeof(ipbuf),"0.0.0.0");
+  time_t entry_t = time(NULL);
+  fprintf(stderr, "[status-plugin] nodedb fetch: entry (ts=%ld) url=%s\n", (long)entry_t, g_nodedb_url);
+  char *fresh=NULL; size_t fn=0;
+  /* If this is the very first fetch since plugin start, the container
+   * networking (DNS/routes) may not be ready yet. Wait a short time for
+   * DNS to resolve the nodedb host before attempting the fetch so
+   * transient startup failures are avoided. This waits up to 30 seconds.
+   */
+  if (g_nodedb_last_fetch == 0 && g_nodedb_url[0]) {
+    char hostbuf[256] = "";
+    const char *u = g_nodedb_url;
+    const char *hstart = strstr(u, "://");
+    if (hstart) hstart += 3; else hstart = u;
+    const char *hend = strchr(hstart, '/');
+    size_t hlen = hend ? (size_t)(hend - hstart) : strlen(hstart);
+    /* strip optional :port */
+    const char *colon = memchr(hstart, ':', hlen);
+    if (colon) hlen = (size_t)(colon - hstart);
+    if (hlen > 0 && hlen < sizeof(hostbuf)) {
+      memcpy(hostbuf, hstart, hlen);
+      hostbuf[hlen] = '\0';
+      int waited = 0;
+      for (int i = 0; i < 30; ++i) {
+        struct addrinfo hints, *res = NULL;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM;
+        if (getaddrinfo(hostbuf, NULL, &hints, &res) == 0) {
+          if (res) freeaddrinfo(res);
+          if (i > 0) fprintf(stderr, "[status-plugin] nodedb fetch: DNS became available after %d seconds\n", i);
+          break;
+        }
+        fprintf(stderr, "[status-plugin] nodedb fetch: waiting for network/DNS to become available (%s) (%d/30)\n", hostbuf, i+1);
+        sleep(1);
+        waited++;
+      }
+      if (waited >= 30) fprintf(stderr, "[status-plugin] nodedb fetch: proceeding after timeout waiting for DNS (%s)\n", hostbuf);
+    }
+  }
 
+  /* Prefer internal HTTP fetch for plain http:// URLs to avoid spawning curl. */
+  int success = 0;
+  if (strncmp(g_nodedb_url, "http://", 7) == 0) {
+    fprintf(stderr, "[status-plugin] nodedb fetch: attempting internal HTTP fetch %s\n", g_nodedb_url);
+    int rc = util_http_get_url(g_nodedb_url, &fresh, &fn, 5);
+    fprintf(stderr, "[status-plugin] nodedb fetch: internal_http rc=%d bytes=%zu\n", rc, fn);
+    if (rc == 0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
+      fprintf(stderr, "[status-plugin] nodedb fetch: method=internal_http success, got %zu bytes\n", fn);
+      success = 1;
+    } else {
+      if (fresh) { free(fresh); fresh = NULL; fn = 0; }
+      fprintf(stderr, "[status-plugin] nodedb fetch: internal_http failed or invalid JSON\n");
+    }
+  }
+  /* If not successful and URL is https or internal fetch failed, try libcurl first, then fall back to spawning curl if available */
+  if (!success) {
+#ifdef HAVE_LIBCURL
+  /* libcurl attempt (if detected at build time) */
+  fprintf(stderr, "[status-plugin] nodedb fetch: attempting libcurl fetch %s\n", g_nodedb_url);
+    CURL *c = curl_easy_init();
+    if (c) {
+      struct curl_fetch cf = { NULL, 0 };
+      curl_easy_setopt(c, CURLOPT_URL, g_nodedb_url);
+      curl_easy_setopt(c, CURLOPT_TIMEOUT, 5L);
+      curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+      curl_easy_setopt(c, CURLOPT_USERAGENT, "status-plugin");
+      struct curl_slist *hdr = NULL; hdr = curl_slist_append(hdr, "Accept: application/json"); curl_easy_setopt(c, CURLOPT_HTTPHEADER, hdr);
+      curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 0L);
+      curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 0L);
+      curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, curl_write_cb);
+      curl_easy_setopt(c, CURLOPT_WRITEDATA, &cf);
+      CURLcode cres = curl_easy_perform(c);
+      curl_slist_free_all(hdr);
+      curl_easy_cleanup(c);
+      if (cres == CURLE_OK && cf.buf && cf.len > 0 && validate_nodedb_json(cf.buf, cf.len)) {
+        fresh = cf.buf; fn = cf.len; success = 1; fprintf(stderr, "[status-plugin] nodedb fetch: method=libcurl success, got %zu bytes\n", fn);
+      } else {
+        if (cf.buf) free(cf.buf);
+        fprintf(stderr, "[status-plugin] nodedb fetch: method=libcurl failed (curl code=%d)\n", (int)cres);
+      }
+    } else {
+      fprintf(stderr, "[status-plugin] nodedb fetch: libcurl init failed\n");
+    }
+#endif
 
+#ifndef NO_CURL_FALLBACK
+    if (!success) {
+      const char *curl_paths[] = {"/usr/bin/curl", "/bin/curl", "/usr/local/bin/curl", "curl", NULL};
+      for (const char **curl_path = curl_paths; *curl_path && !success; curl_path++) {
+        fprintf(stderr, "[status-plugin] nodedb fetch: attempting external curl at %s\n", *curl_path);
+        char cmd[1024];
+        snprintf(cmd,sizeof(cmd),"%s -s --max-time 5 -H \"User-Agent: status-plugin OriginIP/%s\" -H \"Accept: application/json\" %s", *curl_path, ipbuf, g_nodedb_url);
+        if (util_exec(cmd,&fresh,&fn)==0 && fresh && buffer_has_content(fresh,fn) && validate_nodedb_json(fresh,fn)) {
+          fprintf(stderr, "[status-plugin] nodedb fetch: method=external_curl success with %s, got %zu bytes\n", *curl_path, fn);
+          success = 1; break;
+        } else { if (fresh) { free(fresh); fresh = NULL; fn = 0; } }
+      }
+    }
+#else
+    if (!success) {
+      fprintf(stderr, "[status-plugin] nodedb fetch: external curl fallback is DISABLED at build time\n");
+    }
+#endif
+  }
 
+  if (success) {
+    /* augment: if remote JSON is an object mapping IP -> { n:.. } ensure each has hostname/name keys */
+    int is_object_mapping = 0; /* heuristic: starts with '{' and contains '"n"' and an IPv4 pattern */
+    if (fresh[0]=='{' && strstr(fresh,"\"n\"") && strstr(fresh,".\"")) is_object_mapping=1;
+    if (is_object_mapping) {
+      /* naive single-pass insertion: for each occurrence of "n":"VALUE" inside an object that lacks hostname add "hostname":"VALUE","name":"VALUE" */
+      char *aug = malloc(fn*2 + 32); /* generous */
+      if (aug) {
+        size_t o=0; const char *p=fresh; int in_obj=0; int pending_insert=0; char last_n_val[256]; last_n_val[0]=0; int inserted_for_obj=0;
+        while (*p) {
+          if (*p=='{') { in_obj++; inserted_for_obj=0; last_n_val[0]=0; pending_insert=0; }
+          if (*p=='}') { if (pending_insert && last_n_val[0] && !inserted_for_obj) {
+              o += (size_t)snprintf(aug+o, fn*2+32 - o, ",\"hostname\":\"%s\",\"name\":\"%s\"", last_n_val, last_n_val);
+              pending_insert=0; inserted_for_obj=1; }
+            in_obj--; if (in_obj<0) in_obj=0; }
+          if (strncmp(p,"\"n\":\"",5)==0) {
+            const char *vstart = p+5; const char *q=vstart; while(*q && *q!='"') q++; size_t L=(size_t)(q-vstart); if(L>=sizeof(last_n_val)) L=sizeof(last_n_val)-1; memcpy(last_n_val,vstart,L); last_n_val[L]=0; pending_insert=1; inserted_for_obj=0;
+          }
+          if (pending_insert && strncmp(p,"\"hostname\"",10)==0) { pending_insert=0; inserted_for_obj=1; }
+          if (pending_insert && strncmp(p,"\"name\"",6)==0) { /* still add hostname later if only name appears */ }
+          aug[o++]=*p; p++; if(o>fn*2) break; }
+        aug[o]=0;
+  if (o>0) { free(fresh); fresh=aug; fn = o; }
+        else free(aug);
+      }
+    }
+    pthread_mutex_lock(&g_nodedb_lock);
+    if (g_nodedb_cached) free(g_nodedb_cached);
+    g_nodedb_cached=fresh; g_nodedb_cached_len=fn; g_nodedb_last_fetch=time(NULL);
+    pthread_mutex_unlock(&g_nodedb_lock);
+    /* write a copy for external inspection if explicitly enabled (avoid frequent flash writes) */
+    if (g_nodedb_write_disk) {
+      FILE *wf=fopen("/tmp/node_db.json","w"); if(wf){ fwrite(g_nodedb_cached,1,g_nodedb_cached_len,wf); fclose(wf);}
+    }
+    fresh=NULL;
+  } else if (fresh) { free(fresh); }
+    else { fprintf(stderr,"[status-plugin] nodedb fetch failed or invalid (%s)\n", g_nodedb_url); }
+  /* Clear fetch-in-progress and notify any waiters so they can re-check cache. */
+  pthread_mutex_lock(&g_nodedb_fetch_lock);
+  g_nodedb_fetch_in_progress = 0;
+  pthread_cond_broadcast(&g_nodedb_fetch_cv);
+  pthread_mutex_unlock(&g_nodedb_fetch_lock);
+}
 
 /* Improved unique-destination counting: counts distinct destination nodes reachable via given last hop. */
+static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen) {
+  if (!raw || !outbuf || !outlen) return -1;
+  *outbuf = NULL; *outlen = 0;
+  /* Fetch remote node_db only if cache is stale or empty */
+  fetch_remote_nodedb_if_needed();
+  /* --- Route & node name fan-out (Python legacy parity) ------------------
+   * The original bmk-webstatus.py derives per-neighbor route counts and node
+   * counts exclusively from the Linux IPv4 routing table plus node_db names:
+   *   /sbin/ip -4 r | grep -vE 'scope|default' | awk '{print $3,$1,$5}'
+   * It builds:
+   *   gatewaylist[gateway_ip] -> list of destination prefixes (count = routes)
+   *   nodelist[gateway_ip]   -> unique node names (from node_db[dest]['n'])
+   * We replicate that logic here before parsing OLSR link JSON so we can
+   * prefer these authoritative counts. Only if unavailable / zero do we
+   * fall back to topology / neighbors heuristic logic.
+   */
+  /* Prefer topology-based counts (in-memory collectors) over legacy routing-table fan-out.
+   * The original implementation executed `ip route` and derived per-gateway route/node counts
+   * from the system routing table. In modern deployments we prefer authoritative topology data
+   * from OLSR collectors (`status_collect_routes` / `status_collect_topology`) which are already
+   * gathered in-memory. Skip the external exec to avoid races, permission issues and platform
+   * variations. If future route-table parity is needed we can re-introduce a safer collector.
+   */
+  /* no-op placeholder for legacy gw_stats (removed) */
 
+  const char *p = strstr(raw, "\"links\"");
+  const char *arr = NULL;
+  if (p) arr = strchr(p, '[');
+  if (!arr) {
+    /* fallback: first array in document */
+    arr = strchr(raw, '[');
+    if (!arr) {
+      METRIC_SET_UNIQUE(0, 0);
+      return -1;
+    }
+  }
+  const char *q = arr; int depth = 0;
+  /* accumulate totals for metrics */
+  int total_unique_routes = 0;
+  int total_unique_nodes = 0;
+  size_t cap = 4096; size_t len = 0; char *buf = malloc(cap); if (!buf) { METRIC_SET_UNIQUE(0,0); return -1; } buf[0]=0;
+  json_buf_append(&buf, &len, &cap, "["); int first = 1; int parsed = 0;
+  /* Detect legacy (olsrd) or v2 (olsr2 json embedded) route/topology sections. We first look for plain
+   * "routes" / "topology" keys; if not found, fall back to the wrapper keys we emit in /status (olsr_routes_raw / olsr_topology_raw).
+   */
+  const char *routes_section = strstr(raw, "\"routes\"");
+  const char *topology_section = strstr(raw, "\"topology\"");
+  if (!routes_section) {
+    const char *alt = strstr(raw, "\"olsr_routes_raw\"");
+    if (alt) {
+      /* Skip to first '[' after this key so counting helpers work */
+      const char *arrp = strchr(alt, '[');
+      if (arrp) routes_section = arrp - 10 > alt ? alt : arrp; /* provide pointer inside block */
+    }
+  }
+  if (!topology_section) {
+    const char *alt = strstr(raw, "\"olsr_topology_raw\"");
+    if (alt) {
+      const char *arrp = strchr(alt, '[');
+      if (arrp) topology_section = arrp - 10 > alt ? alt : arrp;
+    }
+  }
+  /* Extra heuristic: some vendors/versions embed topology-like arrays without the exact key names we search for.
+   * If we still don't have a topology_section, look for common topology object keys and pick the nearest
+   * array '[' before the first match so the counting helpers can operate on that slice. This is tolerant
+   * and non-destructive: we only set topology_section if it's currently NULL.
+   */
+  if (!topology_section) {
+    const char *candidates[] = { "\"lastHopIP\"", "\"lastHop\"", "\"destinationIP\"", "\"destination\"", "\"destIpAddress\"", NULL };
+    for (int ci = 0; candidates[ci] && !topology_section; ++ci) {
+      const char *found = strstr(raw, candidates[ci]);
+      if (found) {
+        /* walk backwards to find the '[' that opens the array containing this object */
+        const char *b = found;
+        while (b > raw && *b != '[') --b;
+        if (b > raw && *b == '[') topology_section = b;
+      }
+    }
+  }
+  const char *neighbors_section = strstr(raw, "\"neighbors\"");
+  while (*q) {
+    if (*q == '[') { depth++; q++; continue; }
+    if (*q == ']') { depth--; if (depth==0) break; q++; continue; }
+    if (*q == '{') {
+      const char *obj = q; int od = 0; const char *r = q;
+      while (*r) { if (*r=='{') od++; else if (*r=='}') { od--; if (od==0) { r++; break; } } r++; }
+      if (!r || r<=obj) break;
+  char *v; size_t vlen; char intf[128]=""; char local[128]=""; char remote[128]=""; char remote_host[512]=""; char lq[64]=""; char nlq[64]=""; char cost[64]="";
+      if (find_json_string_value(obj, "olsrInterface", &v, &vlen) || find_json_string_value(obj, "ifName", &v, &vlen)) snprintf(intf,sizeof(intf),"%.*s",(int)vlen,v);
+      if (find_json_string_value(obj, "localIP", &v, &vlen) || find_json_string_value(obj, "localIp", &v, &vlen) || find_json_string_value(obj, "local", &v, &vlen)) snprintf(local,sizeof(local),"%.*s",(int)vlen,v);
+      if (find_json_string_value(obj, "remoteIP", &v, &vlen) || find_json_string_value(obj, "remoteIp", &v, &vlen) || find_json_string_value(obj, "remote", &v, &vlen) || find_json_string_value(obj, "neighborIP", &v, &vlen)) snprintf(remote,sizeof(remote),"%.*s",(int)vlen,v);
+      if (!remote[0]) { q = r; continue; }
+  if (remote[0]) { /* use cached lookup */ lookup_hostname_cached(remote, remote_host, sizeof(remote_host)); }
+      if (find_json_string_value(obj, "linkQuality", &v, &vlen)) snprintf(lq,sizeof(lq),"%.*s",(int)vlen,v);
+      if (find_json_string_value(obj, "neighborLinkQuality", &v, &vlen)) snprintf(nlq,sizeof(nlq),"%.*s",(int)vlen,v);
+      if (find_json_string_value(obj, "linkCost", &v, &vlen)) snprintf(cost,sizeof(cost),"%.*s",(int)vlen,v);
+  int routes_cnt = routes_section ? count_routes_for_ip(routes_section, remote) : 0;
+      int nodes_cnt = 0;
+  char node_names_concat[4096]; node_names_concat[0]='\0';
+      /* Prefer topology-derived counts first (in-memory collectors). Legacy
+       * route-table fan-out has been removed to avoid external execs. If
+       * needed, reintroduce a safe in-memory collector to provide similar
+       * parity with old behavior.
+       */
+      if (topology_section) {
+        if (nodes_cnt == 0) {
+          nodes_cnt = count_unique_nodes_for_ip(topology_section, remote);
+          if (nodes_cnt == 0) nodes_cnt = count_nodes_for_ip(topology_section, remote);
+        }
+      }
+      /* Fallback: try neighbors section two-hop counts if topology yielded nothing */
+      if (nodes_cnt == 0 && neighbors_section) {
+        int twohop = neighbor_twohop_for_ip(neighbors_section, remote);
+        if (twohop > 0) nodes_cnt = twohop;
+        if (routes_cnt == 0 && twohop > 0) routes_cnt = twohop; /* approximate */
+      }
+      char routes_s[16]; snprintf(routes_s,sizeof(routes_s),"%d",routes_cnt);
+      char nodes_s[16]; snprintf(nodes_s,sizeof(nodes_s),"%d",nodes_cnt);
+      static char def_ip_cached[64];
+      if (!def_ip_cached[0]) { char *rout_link=NULL; size_t rnl=0; if(util_exec("/sbin/ip route show default 2>/dev/null || /usr/sbin/ip route show default 2>/dev/null || ip route show default 2>/dev/null", &rout_link,&rnl)==0 && rout_link){ char *pdef=strstr(rout_link,"via "); if(pdef){ pdef+=4; char *q2=strchr(pdef,' '); if(q2){ size_t L=q2-pdef; if(L<sizeof(def_ip_cached)){ strncpy(def_ip_cached,pdef,L); def_ip_cached[L]=0; } } } free(rout_link);} }
+      int is_default = (def_ip_cached[0] && strcmp(def_ip_cached, remote)==0)?1:0;
+  if (!first) json_buf_append(&buf,&len,&cap,",");
+  first=0;
+      json_buf_append(&buf,&len,&cap,"{\"intf\":"); json_append_escaped(&buf,&len,&cap,intf);
+      json_buf_append(&buf,&len,&cap,",\"local\":"); json_append_escaped(&buf,&len,&cap,local);
+      json_buf_append(&buf,&len,&cap,",\"remote\":"); json_append_escaped(&buf,&len,&cap,remote);
+      json_buf_append(&buf,&len,&cap,",\"remote_host\":"); json_append_escaped(&buf,&len,&cap,remote_host);
+      json_buf_append(&buf,&len,&cap,",\"lq\":"); json_append_escaped(&buf,&len,&cap,lq);
+      json_buf_append(&buf,&len,&cap,",\"nlq\":"); json_append_escaped(&buf,&len,&cap,nlq);
+      json_buf_append(&buf,&len,&cap,",\"cost\":"); json_append_escaped(&buf,&len,&cap,cost);
+      json_buf_append(&buf,&len,&cap,",\"routes\":"); json_append_escaped(&buf,&len,&cap,routes_s);
+      json_buf_append(&buf,&len,&cap,",\"nodes\":"); json_append_escaped(&buf,&len,&cap,nodes_s);
+  if (node_names_concat[0]) { json_buf_append(&buf,&len,&cap,",\"node_names\":"); json_append_escaped(&buf,&len,&cap,node_names_concat); }
+      json_buf_append(&buf,&len,&cap,",\"is_default\":%s", is_default?"true":"false");
+      json_buf_append(&buf,&len,&cap,"}");
+      parsed++;
+  /* update totals for metrics */
+  if (routes_cnt > 0) total_unique_routes += routes_cnt;
+  if (nodes_cnt > 0) total_unique_nodes += nodes_cnt;
+      q = r; continue;
+    }
+    q++;
+  }
+  if (parsed == 0) {
+    /* broad fallback: scan objects manually */
+    free(buf); buf=NULL; cap=4096; len=0; buf=malloc(cap); if(!buf) return -1; buf[0]=0; json_buf_append(&buf,&len,&cap,"["); first=1;
+    const char *scan = raw; int safety=0;
+    while((scan=strchr(scan,'{')) && safety<500) {
+      safety++; const char *obj=scan; int od=0; const char *r=obj; while(*r){ if(*r=='{') od++; else if(*r=='}'){ od--; if(od==0){ r++; break; } } r++; }
+  if(!r) break;
+  size_t ol=(size_t)(r-obj);
+      if(!memmem(obj,ol,"remote",6) || !memmem(obj,ol,"local",5)) { scan=scan+1; continue; }
+  char *v; size_t vlen; char local[128]=""; char remote[128]=""; char remote_host[512]="";
+      if(find_json_string_value(obj,"localIP",&v,&vlen) || find_json_string_value(obj,"local",&v,&vlen)) snprintf(local,sizeof(local),"%.*s",(int)vlen,v);
+      if(find_json_string_value(obj,"remoteIP",&v,&vlen) || find_json_string_value(obj,"remote",&v,&vlen) || find_json_string_value(obj,"neighborIP",&v,&vlen)) snprintf(remote,sizeof(remote),"%.*s",(int)vlen,v);
+      if(!remote[0]) { scan=r; continue; }
+  if(remote[0]){ /* use cached lookup */ lookup_hostname_cached(remote, remote_host, sizeof(remote_host)); }
+  if(!first) json_buf_append(&buf,&len,&cap,",");
+  first=0;
+      json_buf_append(&buf,&len,&cap,"{\"intf\":\"\",\"local\":"); json_append_escaped(&buf,&len,&cap,local);
+      json_buf_append(&buf,&len,&cap,",\"remote\":"); json_append_escaped(&buf,&len,&cap,remote);
+      json_buf_append(&buf,&len,&cap,",\"remote_host\":"); json_append_escaped(&buf,&len,&cap,remote_host);
+      json_buf_append(&buf,&len,&cap,",\"lq\":\"\",\"nlq\":\"\",\"cost\":\"\",\"routes\":\"0\",\"nodes\":\"0\",\"is_default\":false}");
+      scan=r;
+    }
+  json_buf_append(&buf,&len,&cap,"]"); *outbuf=buf; *outlen=len;
+  /* gw_stats removed */
+  return 0;
+  }
+    json_buf_append(&buf,&len,&cap,"]");
+    *outbuf = buf;
+    *outlen = len;
+    METRIC_SET_UNIQUE(total_unique_routes, total_unique_nodes);
+    return 0;
+}
 
 /* plain-text parser implemented in separate translation unit for reuse.
  * The standalone implementation lives in `standalone_links_parser.c` and
@@ -2726,7 +3308,12 @@ static int h_status(http_request_t *r) {
   (void)vgen_n;
   if (generate_versions_json(&vgen, &vgen_n) != 0) { if (vgen) { free(vgen); vgen = NULL; vgen_n = 0; } }
 
-
+  /* fetch queue and metrics */
+  int qlen = 0; struct fetch_req *fit = NULL; unsigned long m_d=0, m_r=0, m_s=0;
+  pthread_mutex_lock(&g_fetch_q_lock);
+  fit = g_fetch_q_head; while (fit) { qlen++; fit = fit->next; }
+  pthread_mutex_unlock(&g_fetch_q_lock);
+  METRIC_LOAD_ALL(m_d, m_r, m_s);
 
   /* default route (IPv4 and IPv6) */
   /* detect OLSR process state to decide whether to prefer IPv6 default when olsrd2 is present */
@@ -2752,8 +3339,14 @@ static int h_status(http_request_t *r) {
     }
   }
 
-
-
+  {
+    unsigned long _de=0,_den=0,_ded=0,_dp=0,_dpn=0,_dpd=0;
+    DEBUG_LOAD_ALL(_de,_den,_ded,_dp,_dpn,_dpd);
+  unsigned long _ur = 0, _un = 0; METRIC_LOAD_UNIQUE(_ur, _un);
+  APPEND("\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu,\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"unique_routes\":%lu,\"unique_nodes\":%lu,\"thresholds\":{\"queue_warn\":%d,\"queue_crit\":%d,\"dropped_warn\":%d}},", qlen, m_d, m_r, m_s, _de, _den, _ded, _dp, _dpn, _dpd, _ur, _un, g_fetch_queue_warn, g_fetch_queue_crit, g_fetch_dropped_warn);
+  }
+  /* include suggested UI autos-refresh ms */
+  APPEND("\"fetch_auto_refresh_ms\":%d,", g_fetch_auto_refresh_ms);
 
   /* Additional diagnostics: UBNT tuning, caches, log buffer, fetch tunables, process RSS */
   {
@@ -2780,7 +3373,7 @@ static int h_status(http_request_t *r) {
     APPEND("\"devices_cache\":{\"ts\":%ld,\"age_s\":%d,\"len\":%zu},", (long)g_devices_cache_ts, dev_age, g_devices_cache_len);
     APPEND("\"arp_cache\":{\"ts\":%ld,\"age_s\":%d,\"len\":%zu},", (long)g_arp_cache_ts, arp_age, g_arp_cache_len);
     APPEND("\"log_buffer\":{\"configured_lines\":%d,\"stored_lines\":%d},", g_log_buf_lines, g_log_count);
-
+    APPEND("\"fetch_tunables\":{\"queue_max\":%d,\"retries\":%d,\"backoff_initial\":%d},", g_fetch_queue_max, g_fetch_retries, g_fetch_backoff_initial);
     APPEND("\"process_rss_kb\":%ld,", proc_rss_kb);
   }
 
@@ -2972,7 +3565,7 @@ static int h_status(http_request_t *r) {
         combined_raw[l1+1+l2]=0;
       }
     }
-    if (normalize_olsrd_links_plain(combined_raw?combined_raw:olsr_links_raw, &norm, &nn) == 0 && norm && nn>0) {
+    if (normalize_olsrd_links(combined_raw?combined_raw:olsr_links_raw, &norm, &nn) == 0 && norm && nn>0) {
       APPEND("\"links\":"); json_buf_append(&buf, &len, &cap, "%s", norm); APPEND(",");
       /* also attempt to normalize neighbors from neighbors payload */
       char *nne = NULL; size_t nne_n = 0;
@@ -3331,7 +3924,22 @@ static int h_status_lite(http_request_t *r) {
   APP_L("\"uptime_str\":"); json_append_escaped(&buf,&len,&cap,uptime_str); APP_L(",");
   APP_L("\"uptime_linux\":"); json_append_escaped(&buf,&len,&cap,uptime_linux); APP_L(",");
   CHECK_REQ_TIMEOUT_MS(1000);
-
+  /* fetch queue and metrics: include lightweight counters so UI can show queue state during initial load */
+  {
+    int qlen = 0; struct fetch_req *fit = NULL; unsigned long m_d=0, m_r=0, m_s=0;
+  CHECK_REQ_TIMEOUT_MS(1000);
+    pthread_mutex_lock(&g_fetch_q_lock);
+    fit = g_fetch_q_head; while (fit) { qlen++; fit = fit->next; }
+    pthread_mutex_unlock(&g_fetch_q_lock);
+    CHECK_REQ_TIMEOUT_MS(1000);
+    {
+      unsigned long _de=0,_den=0,_ded=0,_dp=0,_dpn=0,_dpd=0;
+      DEBUG_LOAD_ALL(_de,_den,_ded,_dp,_dpn,_dpd);
+      APP_L("\"fetch_stats\":{\"queue_length\":%d,\"dropped\":%lu,\"retries\":%lu,\"successes\":%lu,\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"thresholds\":{\"queue_warn\":%d,\"queue_crit\":%d,\"dropped_warn\":%d}},", qlen, m_d, m_r, m_s, _de, _den, _ded, _dp, _dpn, _dpd, g_fetch_queue_warn, g_fetch_queue_crit, g_fetch_dropped_warn);
+    }
+    /* also include a suggested UI autos-refresh ms value */
+    APP_L("\"fetch_auto_refresh_ms\":%d,", g_fetch_auto_refresh_ms);
+  }
   /* httpd runtime stats: connection pool and task queue */
   {
     int _cp_len = 0, _task_count = 0, _pool_enabled = 0, _pool_size = 0;
@@ -3532,7 +4140,7 @@ static int h_status_lite(http_request_t *r) {
           char *combined = malloc(rab.len + 1);
           if (combined) { memcpy(combined, rab.buf, rab.len); combined[rab.len] = '\0';
             char *norm = NULL; size_t nn = 0;
-            if (normalize_olsrd_links_plain(combined, &norm, &nn) == 0 && norm && nn > 0) {
+            if (normalize_olsrd_links(combined, &norm, &nn) == 0 && norm && nn > 0) {
               unsigned long sum_routes = 0, sum_nodes = 0;
               const char *p = norm;
               while ((p = strstr(p, "\"routes\":")) != NULL) {
@@ -4016,7 +4624,10 @@ static int h_status_stats(http_request_t *r) {
   METRIC_LOAD_ALL(dropped, retries, successes);
   unsigned long unique_routes=0, unique_nodes=0;
   METRIC_LOAD_UNIQUE(unique_routes, unique_nodes);
-  int qlen = 0;
+  int qlen = 0; struct fetch_req *it = NULL;
+  pthread_mutex_lock(&g_fetch_q_lock);
+  it = g_fetch_q_head; while (it) { qlen++; it = it->next; }
+  pthread_mutex_unlock(&g_fetch_q_lock);
 
   // Approximate olsr routes/nodes from cached metrics
   unsigned long olsr_routes = unique_routes; unsigned long olsr_nodes = unique_nodes;
@@ -4073,7 +4684,7 @@ static int h_status_stats(http_request_t *r) {
         if (routes_raw) { strncat(combined, routes_raw, clen); strncat(combined, "\n", clen); }
         if (topology_raw) { strncat(combined, topology_raw, clen); strncat(combined, "\n", clen); }
         char *norm = NULL; size_t nn = 0;
-        if (normalize_olsrd_links_plain(combined, &norm, &nn) == 0 && norm && nn>0) {
+        if (normalize_olsrd_links(combined, &norm, &nn) == 0 && norm && nn>0) {
           /* crude parse: sum all occurrences of "\"routes\":\"NUM\"" and "\"nodes\":\"NUM\"" */
           unsigned long sum_routes = 0, sum_nodes = 0;
           const char *p = norm;
@@ -4292,7 +4903,16 @@ static int h_olsr_links(http_request_t *r) {
         if (l2){ memcpy(combined_raw+off,routes_raw,l2); off+=l2; combined_raw[off++]='\n'; }
         if (l3){ memcpy(combined_raw+off,topology_raw,l3); off+=l3; }
         combined_raw[off]=0;
-        if(normalize_olsrd_links_plain(combined_raw,&norm_links,&nlinks)!=0){ norm_links=NULL; }
+        if(normalize_olsrd_links(combined_raw,&norm_links,&nlinks)!=0){ norm_links=NULL; }
+        /* If JSON normalization produced no entries (empty array or zero-length),
+         * attempt plain-text parsing fallback which some devices expose.
+         */
+        if ((nlinks == 0) || (norm_links && strcmp(norm_links, "[]") == 0)) {
+          if (norm_links) { free(norm_links); norm_links = NULL; nlinks = 0; }
+          if (normalize_olsrd_links_plain(combined_raw, &norm_links, &nlinks) != 0) {
+            if (norm_links) { free(norm_links); norm_links = NULL; nlinks = 0; }
+          }
+        }
         free(combined_raw);
       }
     } else if (total) {
@@ -4397,8 +5017,12 @@ static int h_status_links_live(http_request_t *r) {
   /* Normalize the raw links data to JSON */
   char *norm_links = NULL; size_t nlinks = 0;
   if (links_raw && links_len > 0) {
-    if (normalize_olsrd_links_plain(links_raw, &norm_links, &nlinks) != 0) {
-      if (norm_links) { free(norm_links); norm_links = NULL; nlinks = 0; }
+    if (normalize_olsrd_links(links_raw, &norm_links, &nlinks) != 0) {
+      norm_links = NULL; nlinks = 0;
+      /* Try plain text fallback */
+      if (normalize_olsrd_links_plain(links_raw, &norm_links, &nlinks) != 0) {
+        if (norm_links) { free(norm_links); norm_links = NULL; nlinks = 0; }
+      }
     }
   }
 
@@ -4513,7 +5137,11 @@ static int h_olsr_raw(http_request_t *r) {
         if (l2){ memcpy(combined_raw+off,routes_raw,l2); off+=l2; combined_raw[off++]='\n'; }
         if (l3){ memcpy(combined_raw+off,topology_raw,l3); off+=l3; }
         combined_raw[off]=0;
-        if (normalize_olsrd_links_plain(combined_raw, &norm_links, &nlinks) != 0) { if (norm_links) { free(norm_links); norm_links = NULL; nlinks = 0; } }
+        if (normalize_olsrd_links(combined_raw, &norm_links, &nlinks) != 0) { norm_links = NULL; nlinks = 0; }
+        if ((nlinks == 0) || (norm_links && strcmp(norm_links, "[]") == 0)) {
+          if (norm_links) { free(norm_links); norm_links = NULL; nlinks = 0; }
+          if (normalize_olsrd_links_plain(combined_raw, &norm_links, &nlinks) != 0) { if (norm_links) { free(norm_links); norm_links = NULL; nlinks = 0; } }
+        }
         free(combined_raw);
       }
     }
@@ -4594,14 +5222,106 @@ static int h_status_olsr(http_request_t *r) {
   APP2("\"olsrd_on\":%s,", olsrd_on?"true":"false");
   if (olsr_links_raw) {
     size_t l1=strlen(olsr_links_raw); size_t l2=routes_raw?strlen(routes_raw):0; size_t l3=topology_raw?strlen(topology_raw):0;
-    char *combined_raw=malloc(l1+l2+l3+8); if(combined_raw){ size_t off=0; memcpy(combined_raw+off,olsr_links_raw,l1); off+=l1; combined_raw[off++]='\n'; if(l2){ memcpy(combined_raw+off,routes_raw,l2); off+=l2; combined_raw[off++]='\n'; } if(l3){ memcpy(combined_raw+off,topology_raw,l3); off+=l3; } combined_raw[off]=0; char *norm=NULL; size_t nn=0; if(normalize_olsrd_links_plain(combined_raw,&norm,&nn)==0 && norm){ APP2("\"links\":%s", norm); free(norm);} else { APP2("\"links\":[]"); } free(combined_raw);} else { APP2("\"links\":[]"); }
+    char *combined_raw=malloc(l1+l2+l3+8); if(combined_raw){ size_t off=0; memcpy(combined_raw+off,olsr_links_raw,l1); off+=l1; combined_raw[off++]='\n'; if(l2){ memcpy(combined_raw+off,routes_raw,l2); off+=l2; combined_raw[off++]='\n'; } if(l3){ memcpy(combined_raw+off,topology_raw,l3); off+=l3; } combined_raw[off]=0; char *norm=NULL; size_t nn=0; if(normalize_olsrd_links(combined_raw,&norm,&nn)==0 && norm){ APP2("\"links\":%s", norm); free(norm);} else { APP2("\"links\":[]"); } free(combined_raw);} else { APP2("\"links\":[]"); }
   } else { APP2("\"links\":[]"); }
   APP2("}\n");
   http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,buf,len); free(buf); if(olsr_links_raw) free(olsr_links_raw); if(routes_raw) free(routes_raw); if(topology_raw) free(topology_raw); return 0; }
 
+static int h_nodedb(http_request_t *r) {
+  if (rl_check_and_update(r, "/nodedb.json") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
+  /* Only fetch if needed (respect TTL) */
+  fetch_remote_nodedb_if_needed();
+  pthread_mutex_lock(&g_nodedb_lock);
+  if (g_nodedb_cached && g_nodedb_cached_len>0) {
+    /* Optional debug: when enabled via env var, print cache diagnostics to stderr
+     * This helps when debugging live containers without changing normal behaviour.
+     */
+    const char *dbg = getenv("OLSRD_STATUS_DEBUG_NODEDB");
+    if (dbg && dbg[0]=='1') {
+      /* Print last_fetch as long long to match time_t on targets where it's 64-bit */
+      fprintf(stderr, "[status-plugin][debug] h_nodedb: cached_len=%zu last_fetch=%lld ETag=%zx-%lld\n",
+              g_nodedb_cached_len, (long long)g_nodedb_last_fetch, g_nodedb_cached_len, (long long)g_nodedb_last_fetch);
+      /* print first up to 64 bytes in hex to aid quick inspection */
+      size_t preview = g_nodedb_cached_len < 64 ? g_nodedb_cached_len : 64;
+      fprintf(stderr, "[status-plugin][debug] h_nodedb: preview=");
+      for (size_t i = 0; i < preview; ++i) fprintf(stderr, "%02x", (unsigned char)g_nodedb_cached[i]);
+      fprintf(stderr, "\n");
+    }
+  /* Add basic caching headers to reduce client revalidation frequency */
+  http_send_status(r,200,"OK");
+  http_printf(r,"Content-Type: application/json; charset=utf-8\r\n");
+  /* Cache-Control: client-side TTL aligns with server-side TTL */
+  http_printf(r,"Cache-Control: public, max-age=%d\r\n", g_nodedb_ttl);
+  /* Last-Modified: use last fetch time */
+    if (g_nodedb_last_fetch) {
+      char tbuf[64]; format_rfc1123_time(g_nodedb_last_fetch, tbuf, sizeof(tbuf)); http_printf(r, "Last-Modified: %s\r\n", tbuf);
+    }
+    /* ETag: weak tag based on length + last_fetch to allow conditional GET */
+  http_printf(r,"ETag: \"%zx-%lld\"\r\n\r\n", g_nodedb_cached_len, (long long)g_nodedb_last_fetch);
+  http_write(r,g_nodedb_cached,g_nodedb_cached_len); pthread_mutex_unlock(&g_nodedb_lock); return 0; }
+  pthread_mutex_unlock(&g_nodedb_lock);
+  /* Debug: return error info instead of empty JSON */
+  char debug_json[1024];
+  char url_copy[256];
+  strncpy(url_copy, g_nodedb_url, sizeof(url_copy) - 1);
+  url_copy[sizeof(url_copy) - 1] = '\0';
+  snprintf(debug_json, sizeof(debug_json), "{\"error\":\"No remote node_db data available\",\"url\":\"%s\",\"last_fetch\":%lld,\"cached_len\":%zu}", url_copy, (long long)g_nodedb_last_fetch, g_nodedb_cached_len);
+  send_json(r, debug_json); return 0;
+}
 
+/* Force a refresh of the remote node_db (bypass TTL). Returns JSON status. */
+static int h_nodedb_refresh(http_request_t *r) {
+  if (rl_check_and_update(r, "/nodedb/refresh") != 0) {
+    http_send_status(r, 429, "Too Many Requests");
+    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
+    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
+    http_write(r, b, strlen(b));
+    return 0;
+  }
+  /* Make refresh non-blocking by default to avoid tying up the HTTP thread.
+   * If caller explicitly requests blocking behaviour via ?wait=1, preserve
+   * the previous semantics (enqueue and wait). Non-blocking calls will
+   * immediately return a queued status and current queue length.
+   */
+  char wbuf[8] = "0";
+  int do_wait = 0;
+  if (get_query_param(r, "wait", wbuf, sizeof(wbuf))) {
+    if (strcmp(wbuf, "1") == 0) do_wait = 1;
+  }
 
+  if (do_wait) {
+    /* perform forced fetch: enqueue and wait for completion (legacy behaviour) */
+    enqueue_fetch_request(1, 1, FETCH_TYPE_NODEDB);
+    pthread_mutex_lock(&g_nodedb_lock);
+    if (g_nodedb_cached && g_nodedb_cached_len>0) {
+      /* return a small success JSON including last_fetch */
+      char resp[256]; snprintf(resp, sizeof(resp), "{\"status\":\"ok\",\"last_fetch\":%lld,\"len\":%zu}", (long long)g_nodedb_last_fetch, g_nodedb_cached_len);
+      http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,resp,strlen(resp)); pthread_mutex_unlock(&g_nodedb_lock); return 0;
+    }
+    pthread_mutex_unlock(&g_nodedb_lock);
+    send_json(r, "{\"status\":\"error\",\"message\":\"fetch failed\"}");
+    return 0;
+  }
 
+  /* Non-blocking: enqueue and return queued status immediately */
+  enqueue_fetch_request(1, 0, FETCH_TYPE_NODEDB);
+  /* compute current queue length */
+  pthread_mutex_lock(&g_fetch_q_lock);
+  int qlen = 0; struct fetch_req *it = g_fetch_q_head; while (it) { qlen++; it = it->next; }
+  pthread_mutex_unlock(&g_fetch_q_lock);
+  pthread_mutex_lock(&g_nodedb_lock);
+  long last = g_nodedb_last_fetch; size_t len = g_nodedb_cached_len;
+  pthread_mutex_unlock(&g_nodedb_lock);
+  char resp2[256]; snprintf(resp2, sizeof(resp2), "{\"status\":\"queued\",\"last_fetch\":%ld,\"len\":%zu,\"queue_len\":%d}", last, len, qlen);
+  http_send_status(r,200,"OK"); http_printf(r,"Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r,resp2,strlen(resp2));
+  return 0;
+}
 
   /* Simple metrics endpoint for fetch-related counters */
   static int h_fetch_metrics(http_request_t *r) {
@@ -4673,7 +5393,9 @@ static int h_prometheus_metrics(http_request_t *r) {
   } while(0)
   unsigned long d=0, rts=0, s=0; METRIC_LOAD_ALL(d, rts, s);
   unsigned long de=0, den=0, ded=0, dp=0, dpn=0, dpd=0; DEBUG_LOAD_ALL(de, den, ded, dp, dpn, dpd);
-  int qlen = 0;
+  pthread_mutex_lock(&g_fetch_q_lock);
+  int qlen = 0; struct fetch_req *it = g_fetch_q_head; while (it) { qlen++; it = it->next; }
+  pthread_mutex_unlock(&g_fetch_q_lock);
   SAFE_APPEND("# HELP olsrd_status_fetch_queue_length Number of pending fetch requests\n");
   SAFE_APPEND("# TYPE olsrd_status_fetch_queue_length gauge\n");
   SAFE_APPEND("olsrd_status_fetch_queue_length %d\n", qlen);
@@ -4868,12 +5590,24 @@ static int h_fetch_debug(http_request_t *r) {
     http_write(r, b, strlen(b));
     return 0;
   }
-  int qlen = 0;
+  pthread_mutex_lock(&g_fetch_q_lock);
+  int qlen = 0; struct fetch_req *it = g_fetch_q_head;
+  while (it) { qlen++; it = it->next; }
   /* Build JSON array of simple objects: {"force":0|1,"wait":0|1,"type":N} */
-  char *buf = NULL; size_t cap = 1024; size_t len = 0; buf = malloc(cap); if(!buf){ send_json(r, "{}\n"); return 0; } buf[0]=0;
+  char *buf = NULL; size_t cap = 1024; size_t len = 0; buf = malloc(cap); if(!buf){ send_json(r, "{}\n"); pthread_mutex_unlock(&g_fetch_q_lock); return 0; } buf[0]=0;
   /* Use json_appendf to safely grow the buffer and avoid signed/unsigned arithmetic */
   if (json_appendf(&buf, &len, &cap, "{\"queue_length\":%d,\"requests\":[", qlen) != 0) {
-    free(buf); send_json(r, "{}\n"); return 0;
+    free(buf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0;
+  }
+  it = g_fetch_q_head; int first=1; while (it) {
+    if (!first) {
+      if (json_appendf(&buf, &len, &cap, ",") != 0) { free(buf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0; }
+    }
+    first = 0;
+    if (json_appendf(&buf, &len, &cap, "{\"force\":%d,\"wait\":%d,\"type\":%d}", it->force?1:0, it->wait?1:0, it->type) != 0) {
+      free(buf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0;
+    }
+    it = it->next;
   }
   unsigned long _de=0,_den=0,_ded=0,_dp=0,_dpn=0,_dpd=0;
   DEBUG_LOAD_ALL(_de,_den,_ded,_dp,_dpn,_dpd);
@@ -4885,9 +5619,10 @@ static int h_fetch_debug(http_request_t *r) {
     /* avoid using array identifier in boolean context to silence -Waddress */
     const char *dbgmsg = (g_debug_last_fetch_msg[0]) ? g_debug_last_fetch_msg : "";
     if (json_appendf(&buf, &len, &cap, "],\"debug\":{\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"last_fetch_msg\":\"%s\",\"httpd_stats\":{\"conn_pool_len\":%d,\"task_count\":%d,\"pool_enabled\":%d,\"pool_size\":%d}}}", _de, _den, _ded, _dp, _dpn, _dpd, dbgmsg, _cp_len, _task_count, _pool_enabled, _pool_size) != 0) {
-      free(buf); send_json(r, "{}\n"); return 0;
+      free(buf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0;
     }
   }
+  pthread_mutex_unlock(&g_fetch_q_lock);
   send_json(r, buf);
   free(buf);
   return 0;
@@ -4992,9 +5727,17 @@ static int h_diagnostics_json(http_request_t *r) {
   }
 
   /* fetch_debug: mirror h_fetch_debug behavior */
-  int qlen = 0;
-  fetchbuf = malloc(fcap); if (!fetchbuf) { send_json(r, "{}\n"); return 0; } fetchbuf[0]=0; flen=0;
-  if (json_appendf(&fetchbuf, &flen, &fcap, "{\"queue_length\":%d,\"requests\":[", qlen) != 0) { free(fetchbuf); send_json(r, "{}\n"); return 0; }
+  pthread_mutex_lock(&g_fetch_q_lock);
+  int qlen = 0; struct fetch_req *it = g_fetch_q_head;
+  while (it) { qlen++; it = it->next; }
+  fetchbuf = malloc(fcap); if (!fetchbuf) { pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0; } fetchbuf[0]=0; flen=0;
+  if (json_appendf(&fetchbuf, &flen, &fcap, "{\"queue_length\":%d,\"requests\":[", qlen) != 0) { free(fetchbuf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0; }
+  it = g_fetch_q_head; int first = 1; while (it) {
+    if (!first) { if (json_appendf(&fetchbuf, &flen, &fcap, ",") != 0) { free(fetchbuf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0; } }
+    first = 0;
+    if (json_appendf(&fetchbuf, &flen, &fcap, "{\"force\":%d,\"wait\":%d,\"type\":%d}", it->force?1:0, it->wait?1:0, it->type) != 0) { free(fetchbuf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0; }
+    it = it->next;
+  }
   unsigned long _de=0,_den=0,_ded=0,_dp=0,_dpn=0,_dpd=0;
   DEBUG_LOAD_ALL(_de,_den,_ded,_dp,_dpn,_dpd);
   {
@@ -5003,9 +5746,10 @@ static int h_diagnostics_json(http_request_t *r) {
     httpd_get_runtime_stats(&_cp_len, &_task_count, &_pool_enabled, &_pool_size);
     const char *dbgmsg = (g_debug_last_fetch_msg[0]) ? g_debug_last_fetch_msg : "";
     if (json_appendf(&fetchbuf, &flen, &fcap, "],\"debug\":{\"enqueued\":%lu,\"enqueued_nodedb\":%lu,\"enqueued_discover\":%lu,\"processed\":%lu,\"processed_nodedb\":%lu,\"processed_discover\":%lu,\"last_fetch_msg\":\"%s\",\"httpd_stats\":{\"conn_pool_len\":%d,\"task_count\":%d,\"pool_enabled\":%d,\"pool_size\":%d}}}", _de, _den, _ded, _dp, _dpn, _dpd, dbgmsg, _cp_len, _task_count, _pool_enabled, _pool_size) != 0) {
-      free(fetchbuf); send_json(r, "{}\n"); return 0;
+      free(fetchbuf); pthread_mutex_unlock(&g_fetch_q_lock); send_json(r, "{}\n"); return 0;
     }
   }
+  pthread_mutex_unlock(&g_fetch_q_lock);
 
   /* status summary: hostname, ip, uptime */
   {
@@ -5050,7 +5794,7 @@ static int h_diagnostics_json(http_request_t *r) {
   if (json_appendf(&out, &outlen, &outcap, "\"config\":{\"bind\":\"%s\",\"port\":%d,\"enable_ipv6\":%d,\"asset_root\":\"%s\"},", g_bind, g_port, g_enable_ipv6, g_asset_root) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
   if (json_appendf(&out, &outlen, &outcap, "\"fetch\":{\"queue_max\":%d,\"retries\":%d,\"backoff_initial\":%d,\"queue_warn\":%d,\"queue_crit\":%d,\"queue_length\":%d},", g_fetch_queue_max, g_fetch_retries, g_fetch_backoff_initial, g_fetch_queue_warn, g_fetch_queue_crit, qlen) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
   if (json_appendf(&out, &outlen, &outcap, "\"metrics\":{\"fetch_dropped\":%lu,\"fetch_retries\":%lu,\"fetch_successes\":%lu,\"unique_routes\":%lu,\"unique_nodes\":%lu},", d, rr, s, ur, un) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
-  if (json_appendf(&out, &outlen, &outcap, "\"workers\":{\"devices_worker_running\":%d},", g_devices_worker_running) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+  if (json_appendf(&out, &outlen, &outcap, "\"workers\":{\"fetch_worker_running\":%d,\"nodedb_worker_running\":%d,\"devices_worker_running\":%d},", g_fetch_worker_running, g_nodedb_worker_running, g_devices_worker_running) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
 
   /* expose some top-level booleans and additional config flags */
   if (json_appendf(&out, &outlen, &outcap, "\"status_flags\":{\"is_edgerouter\":%d,\"is_linux_container\":%d,\"allow_arp_fallback\":%d,\"status_devices_mode\":%d},", g_is_edgerouter, g_is_linux_container, g_allow_arp_fallback, g_status_devices_mode) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
@@ -5059,8 +5803,8 @@ static int h_diagnostics_json(http_request_t *r) {
               g_cfg_port_set, g_cfg_nodedb_ttl_set, g_cfg_nodedb_write_disk_set, g_cfg_nodedb_url_set, g_cfg_net_count,
               g_nodedb_ttl, (int)g_nodedb_last_fetch, (int)g_nodedb_cached_len, g_nodedb_fetch_in_progress, g_nodedb_write_disk, g_nodedb_startup_wait, g_nodedb_url) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
 
-    if (json_appendf(&out, &outlen, &outcap, "\"fetch_opts\":{\"fetch_log_queue\":%d,\"cfg_fetch_log_queue_set\":%d,\"fetch_log_force\":%d,\"cfg_fetch_log_force_set\":%d,\"fetch_auto_refresh_ms\":%d,\"cfg_fetch_auto_refresh_set\":%d},",
-                          g_fetch_log_queue, g_cfg_fetch_log_queue_set, g_fetch_log_force, g_cfg_fetch_log_force_set, g_fetch_auto_refresh_ms, g_cfg_fetch_auto_refresh_set) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
+    if (json_appendf(&out, &outlen, &outcap, "\"fetch_opts\":{\"fetch_log_queue\":%d,\"cfg_fetch_log_queue_set\":%d,\"fetch_log_force\":%d,\"cfg_fetch_log_force_set\":%d,\"fetch_report_interval\":%d,\"cfg_fetch_report_set\":%d,\"fetch_auto_refresh_ms\":%d,\"cfg_fetch_auto_refresh_set\":%d},",
+                          g_fetch_log_queue, g_cfg_fetch_log_queue_set, g_fetch_log_force, g_cfg_fetch_log_force_set, g_fetch_report_interval, g_cfg_fetch_report_set, g_fetch_auto_refresh_ms, g_cfg_fetch_auto_refresh_set) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
 
     if (json_appendf(&out, &outlen, &outcap, "\"ubnt\":{\"devices_discover_interval\":%d,\"ubnt_probe_window_ms\":%d,\"ubnt_cache_ttl_s\":%d},", g_devices_discover_interval, g_ubnt_probe_window_ms, g_ubnt_cache_ttl_s) != 0) { free(out); if(versions) free(versions); if(fetchbuf) free(fetchbuf); if(summary) free(summary); send_json(r, "{}\n"); return 0; }
 
@@ -5086,7 +5830,7 @@ static int h_diagnostics_json(http_request_t *r) {
       { "fetch_queue_max", &g_cfg_fetch_queue_set, "OLSRD_STATUS_FETCH_QUEUE_MAX", "params.fetch_queue_max.desc" },
       { "fetch_retries", &g_cfg_fetch_retries_set, "OLSRD_STATUS_FETCH_RETRIES", "params.fetch_retries.desc" },
       { "fetch_backoff_initial", &g_cfg_fetch_backoff_set, "OLSRD_STATUS_FETCH_BACKOFF_INITIAL", "params.fetch_backoff_initial.desc" },
-
+      { "fetch_report_interval", &g_cfg_fetch_report_set, "OLSRD_STATUS_FETCH_REPORT_INTERVAL", "params.fetch_report_interval.desc" },
       { "fetch_auto_refresh_ms", &g_cfg_fetch_auto_refresh_set, "OLSRD_STATUS_FETCH_AUTO_REFRESH_MS", "params.fetch_auto_refresh_ms.desc" },
       { "fetch_log_queue", &g_cfg_fetch_log_queue_set, "OLSRD_STATUS_FETCH_LOG_QUEUE", "params.fetch_log_queue.desc" },
       { "fetch_log_force", &g_cfg_fetch_log_force_set, "OLSRD_STATUS_FETCH_LOG_FORCE", "params.fetch_log_force.desc" },
@@ -5460,7 +6204,35 @@ static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
     cache_set(g_host_cache, ipv4, out);
     return;
   }
+  /* try cached remote node_db first */
+  fetch_remote_nodedb_if_needed();
+  if (g_nodedb_cached && g_nodedb_cached_len > 0) {
+    char needle[256];
+    if (snprintf(needle, sizeof(needle), "\"%s\":", ipv4) >= (int)sizeof(needle)) {
+      /* IP address too long, skip */
+      goto nothing_found;
+    }
+    char *pos = strstr(g_nodedb_cached, needle);
+    if (pos) {
+      char *hpos = strstr(pos, "\"hostname\":");
+      if (hpos) {
+        size_t vlen = 0; char *vptr = NULL;
+        if (find_json_string_value(hpos, "hostname", &vptr, &vlen)) {
+          size_t copy = vlen < outlen-1 ? vlen : outlen-1; memcpy(out, vptr, copy); out[copy]=0; cache_set(g_host_cache, ipv4, out); return;
+        }
+      }
+      /* fallback to "n" */
+      char *npos = strstr(pos, "\"n\":");
+      if (npos) {
+        size_t vlen2 = 0; char *vptr2 = NULL;
+        if (find_json_string_value(npos, "n", &vptr2, &vlen2)) {
+          size_t copy = vlen2 < outlen-1 ? vlen2 : outlen-1; memcpy(out, vptr2, copy); out[copy]=0; cache_set(g_host_cache, ipv4, out); return;
+        }
+      }
+    }
+  }
   /* nothing found */
+nothing_found:
   out[0]=0;
 }
 
@@ -5484,7 +6256,7 @@ static int set_int_param(const char *value, void *data, set_plugin_parameter_add
   if (data == &g_fetch_queue_max) g_cfg_fetch_queue_set = 1;
   if (data == &g_fetch_retries) g_cfg_fetch_retries_set = 1;
   if (data == &g_fetch_backoff_initial) g_cfg_fetch_backoff_set = 1;
-
+  if (data == &g_fetch_report_interval) g_cfg_fetch_report_set = 1;
   if (data == &g_fetch_auto_refresh_ms) g_cfg_fetch_auto_refresh_set = 1;
   if (data == &g_fetch_queue_warn) g_cfg_fetch_queue_warn_set = 1;
   if (data == &g_fetch_queue_crit) g_cfg_fetch_queue_crit_set = 1;
@@ -5524,7 +6296,7 @@ static const struct olsrd_plugin_parameters g_params[] = {
   { .name = "fetch_queue_max", .set_plugin_parameter = &set_int_param, .data = &g_fetch_queue_max, .addon = {0} },
   { .name = "fetch_retries", .set_plugin_parameter = &set_int_param, .data = &g_fetch_retries, .addon = {0} },
   { .name = "fetch_backoff_initial", .set_plugin_parameter = &set_int_param, .data = &g_fetch_backoff_initial, .addon = {0} },
-
+  { .name = "fetch_report_interval", .set_plugin_parameter = &set_int_param, .data = &g_fetch_report_interval, .addon = {0} },
   { .name = "fetch_auto_refresh_ms", .set_plugin_parameter = &set_int_param, .data = &g_fetch_auto_refresh_ms, .addon = {0} },
   { .name = "fetch_log_queue", .set_plugin_parameter = &set_int_param, .data = &g_fetch_log_queue, .addon = {0} },
   { .name = "fetch_log_force", .set_plugin_parameter = &set_int_param, .data = &g_fetch_log_force, .addon = {0} },
@@ -5708,7 +6480,17 @@ int olsrd_plugin_init(void) {
     if (env_dw && env_dw[0]) { char *endptr=NULL; long v=strtol(env_dw,&endptr,10); if (endptr && *endptr=='\0' && v>=0 && v<=100000) { g_fetch_dropped_warn = (int)v; fprintf(stderr, "[status-plugin] overriding fetch_dropped_warn from env: %d\n", g_fetch_dropped_warn); } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_DROPPED_WARN value: %s (ignored)\n", env_dw); }
   }
 
-
+  /* Fetch reporter interval: optional periodic stderr summary */
+  if (!g_cfg_fetch_report_set) {
+    const char *env_i = getenv("OLSRD_STATUS_FETCH_REPORT_INTERVAL");
+    if (env_i && env_i[0]) {
+      char *endptr = NULL; long v = strtol(env_i, &endptr, 10);
+      if (endptr && *endptr == '\0' && v >= 0 && v <= 3600) {
+        g_fetch_report_interval = (int)v;
+        fprintf(stderr, "[status-plugin] setting fetch_report_interval from env: %d\n", g_fetch_report_interval);
+      } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_FETCH_REPORT_INTERVAL value: %s (ignored)\n", env_i);
+    }
+  }
 
   /* Auto-refresh (ms) env override for UI suggested interval (only if not set via PlParam) */
   if (!g_cfg_fetch_auto_refresh_set) {
@@ -5938,7 +6720,11 @@ int olsrd_plugin_init(void) {
     }
   }
 
-
+  /* Start periodic reporter if requested */
+  if (g_fetch_report_interval > 0) {
+    pthread_create(&g_fetch_report_thread, NULL, fetch_reporter, NULL);
+    pthread_detach(g_fetch_report_thread);
+  }
 
   const char *env_ttl = getenv("OLSRD_STATUS_PLUGIN_NODEDB_TTL");
   if (env_ttl && env_ttl[0] && !g_cfg_nodedb_ttl_set) {
@@ -6010,6 +6796,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/olsr/routes", &h_olsr_routes);
   http_server_register_handler("/olsr/raw", &h_olsr_raw); /* debug */
   http_server_register_handler("/capabilities", &h_capabilities_local);
+  http_server_register_handler("/nodedb/refresh", &h_nodedb_refresh);
   http_server_register_handler("/metrics", &h_prometheus_metrics);
   http_server_register_handler("/olsrd",    &h_olsrd);
   http_server_register_handler("/olsr2",    &h_olsrd);
@@ -6023,6 +6810,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/airos",    &h_airos);
   http_server_register_handler("/traffic",  &h_traffic);
   http_server_register_handler("/versions.json", &h_versions_json);
+  http_server_register_handler("/nodedb.json", &h_nodedb);
   http_server_register_handler("/fetch_metrics", &h_fetch_metrics);
   http_server_register_handler("/fetch_debug", &h_fetch_debug);
   http_server_register_handler("/diagnostics.json", &h_diagnostics_json);
@@ -6038,6 +6826,8 @@ int olsrd_plugin_init(void) {
   endpoint_coalesce_init(&g_devices_co, g_coalesce_devices_ttl);
   endpoint_coalesce_init(&g_links_co, g_coalesce_links_ttl);
   start_devices_worker();
+  /* start node DB background worker */
+  start_nodedb_worker();
   /* install SIGSEGV handler for diagnostic backtraces */
   signal(SIGSEGV, sigsegv_handler);
   return 0;
@@ -6050,6 +6840,11 @@ void olsrd_plugin_exit(void) {
   pthread_mutex_lock(&g_devices_cache_lock);
   if (g_devices_cache) { free(g_devices_cache); g_devices_cache = NULL; g_devices_cache_len = 0; }
   pthread_mutex_unlock(&g_devices_cache_lock);
+  /* stop nodedb worker and free cache */
+  g_nodedb_worker_running = 0;
+  pthread_mutex_lock(&g_nodedb_lock);
+  if (g_nodedb_cached) { free(g_nodedb_cached); g_nodedb_cached = NULL; g_nodedb_cached_len = 0; }
+  pthread_mutex_unlock(&g_nodedb_lock);
   /* stop stderr capture */
   stop_stderr_capture();
 }
@@ -6404,7 +7199,8 @@ static int h_discover_ubnt(http_request_t *r) {
   }
   /* Try immediate internal aggregated discovery first (fast path) */
   if (ubnt_discover_output(&devices_json, &devices_n) != 0 || !devices_json || devices_n == 0) {
-    /* try cache as fallback */
+    /* enqueue and wait briefly as fallback */
+    enqueue_fetch_request(1, 1, FETCH_TYPE_DISCOVER);
     pthread_mutex_lock(&g_devices_cache_lock);
     if (g_devices_cache && g_devices_cache_len > 0) {
       time_t nowt = time(NULL);
@@ -6412,15 +7208,7 @@ static int h_discover_ubnt(http_request_t *r) {
         devices_json = strdup(g_devices_cache);
         devices_n = g_devices_cache_len;
       } else {
-        /* cache is stale, try to refresh it */
-        pthread_mutex_unlock(&g_devices_cache_lock);
-        fetch_discover_once();
-        pthread_mutex_lock(&g_devices_cache_lock);
-        if (g_devices_cache && g_devices_cache_len > 0) {
-          devices_json = strdup(g_devices_cache);
-          devices_n = g_devices_cache_len;
-        }
-        if (g_fetch_log_queue || g_fetch_log_force) fprintf(stderr, "[status-plugin] discover_ubnt fallback: refreshed stale devices cache\n");
+        if (g_fetch_log_queue || g_fetch_log_force) fprintf(stderr, "[status-plugin] discover_ubnt fallback: devices cache stale (age=%lds > %ds)\n", (long)(nowt - g_devices_cache_ts), g_ubnt_cache_ttl_s);
       }
     }
     pthread_mutex_unlock(&g_devices_cache_lock);
