@@ -3148,38 +3148,64 @@ static int util_http_get_olsr2_local(const char *command, char **out, size_t *ou
 }
 
 /* Robust detection of olsrd / olsrd2 processes for diverse environments (EdgeRouter, containers, musl) */
-static void detect_olsr_processes(int *out_olsrd, int *out_olsr2) {
-  if(out_olsrd) {
-    *out_olsrd = 0;
-  }
-  if(out_olsr2) {
-    *out_olsr2 = 0;
-  }
-  char *out=NULL; size_t on=0;
-  if(out_olsr2 && util_exec("pidof olsrd2 2>/dev/null", &out,&on)==0 && out && on>0){ *out_olsr2=1; }
-  if(out){ free(out); out=NULL; on=0; }
-  if(out_olsrd && util_exec("pidof olsrd 2>/dev/null", &out,&on)==0 && out && on>0){ *out_olsrd=1; }
-  if(out){ free(out); out=NULL; on=0; }
-  if( (out_olsrd && *out_olsrd) || (out_olsr2 && *out_olsr2) ) return;
-  /* Fallback: parse ps output (works even when pidof missing or wrapper used) */
-  if(util_exec("ps -o pid= -o comm= -o args= 2>/dev/null", &out,&on)!=0 || !out){
-    if(out){ free(out); out=NULL; on=0; }
-    util_exec("ps 2>/dev/null", &out,&on); /* busybox minimal */
-  }
-  if(out){
-    const char *needle2="olsrd2"; const char *needle1="olsrd"; /* order: check olsrd2 first to avoid substring confusion */
-    const char *p=out;
-    while(p && *p){
-      const char *line_end=strchr(p,'\n'); if(!line_end) line_end=p+strlen(p);
-      if(line_end>p){
-        if(out_olsr2 && !*out_olsr2){ if(strstr(p,needle2)) *out_olsr2=1; }
-        if(out_olsrd && !*out_olsrd){ if(strstr(p,needle1) && !strstr(p,needle2)) *out_olsrd=1; }
-        if( (out_olsrd && *out_olsrd) && (out_olsr2 && *out_olsr2) ) break;
-      }
-      if(*line_end==0) break; else p=line_end+1;
+static int token_in_line(const char *line, const char *token) {
+  if (!line || !token) return 0;
+  size_t tlen = strlen(token);
+  const char *p = line;
+  while ((p = strstr(p, token)) != NULL) {
+    /* check left boundary */
+    if (p != line) {
+      char lc = *(p - 1);
+      if (isalnum((unsigned char)lc) || lc == '_') { p += 1; continue; }
     }
-    free(out);
+    /* check right boundary */
+    const char *r = p + tlen;
+    if (*r) {
+      if (isalnum((unsigned char)*r) || *r == '_') { p += 1; continue; }
+    }
+    return 1;
   }
+  return 0;
+}
+
+static void detect_olsr_processes(int *out_olsrd, int *out_olsr2) {
+  if (out_olsrd) *out_olsrd = 0;
+  if (out_olsr2) *out_olsr2 = 0;
+
+  char *ps_out = NULL; size_t ps_n = 0;
+  /* Prefer a structured ps output with command and args */
+  if (util_exec("ps -o pid= -o comm= -o args= 2>/dev/null", &ps_out, &ps_n) != 0 || !ps_out) {
+    if (ps_out) { free(ps_out); ps_out = NULL; ps_n = 0; }
+    /* Fallback to plain ps for busybox */
+    util_exec("ps 2>/dev/null", &ps_out, &ps_n);
+  }
+
+  if (!ps_out) return;
+
+  const char *p = ps_out;
+  while (p && *p) {
+    const char *line_end = strchr(p, '\n');
+    size_t L = line_end ? (size_t)(line_end - p) : strlen(p);
+    if (L > 0) {
+      /* Make a temporary nul-terminated copy of the line for safe checks */
+      char *line = strndup(p, L);
+      if (line) {
+        /* Check for olsrd2 first to avoid matching olsrd inside olsrd2 */
+        if (out_olsr2 && !*out_olsr2) {
+          if (token_in_line(line, "olsrd2") || token_in_line(line, "olsrd2_static") || token_in_line(line, "olsrd2_static")) *out_olsr2 = 1;
+        }
+        if (out_olsrd && !*out_olsrd) {
+          /* Match olsrd but avoid lines that contain olsrd2 */
+          if (token_in_line(line, "olsrd") && !token_in_line(line, "olsrd2")) *out_olsrd = 1;
+        }
+        free(line);
+      }
+    }
+    if (!line_end) break; p = line_end + 1;
+    if ((out_olsrd && *out_olsrd) && (out_olsr2 && *out_olsr2)) break;
+  }
+
+  free(ps_out);
 }
 
 static int h_airos(http_request_t *r);
