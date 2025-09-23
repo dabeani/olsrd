@@ -4176,27 +4176,27 @@ static int h_status_lite(http_request_t *r) {
   }
 
   if (lite_olsr2_version_raw && lite_olsr2_version_n > 0) {
-    APP_L(",\"olsr2_version\":%s", lite_olsr2_version_raw);
+    APP_L("\"olsr2_version\":%s", lite_olsr2_version_raw);
   } else {
-    APP_L(",\"olsr2_version\":{}");
+    APP_L("\"olsr2_version\":{}");
   }
 
   if (lite_olsr2_time_raw && lite_olsr2_time_n > 0) {
-    APP_L(",\"olsr2_time\":%s", lite_olsr2_time_raw);
+    APP_L("\"olsr2_time\":%s", lite_olsr2_time_raw);
   } else {
-    APP_L(",\"olsr2_time\":{}");
+    APP_L("\"olsr2_time\":{}");
   }
 
   if (lite_olsr2_originator_raw && lite_olsr2_originator_n > 0) {
-    APP_L(",\"olsr2_originator\":%s", lite_olsr2_originator_raw);
+    APP_L("\"olsr2_originator\":%s", lite_olsr2_originator_raw);
   } else {
-    APP_L(",\"olsr2_originator\":{}");
+    APP_L("\"olsr2_originator\":{}");
   }
 
   if (lite_olsr2_neighbors_raw && lite_olsr2_neighbors_n > 0) {
-    APP_L(",\"olsr2_neighbors\":%s", lite_olsr2_neighbors_raw);
+    APP_L("\"olsr2_neighbors\":%s", lite_olsr2_neighbors_raw);
   } else {
-    APP_L(",\"olsr2_neighbors\":{}");
+    APP_L("\"olsr2_neighbors\":{}");
   }
 
   /* Free OLSR2 data */
