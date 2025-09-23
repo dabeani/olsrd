@@ -3387,7 +3387,7 @@ static int h_status(http_request_t *r) {
   if(!olsrd_on && !olsr2_on) fprintf(stderr,"[status-plugin] no OLSR process detected (robust path)\n");
 
   /* fetch links: prefer direct in-memory collectors to avoid local HTTP probes */
-  char *olsr_links_raw = NULL; size_t oln = 0; char selected_olsr_ep[256] = "";
+  char *olsr_links_raw = NULL; size_t oln = 0;
   {
     struct autobuf nab;
     if (abuf_init(&nab, 4096) == 0) {
@@ -3402,7 +3402,7 @@ static int h_status(http_request_t *r) {
   }
 
   char *olsr_neighbors_raw = NULL; size_t olnn = 0;
-  /* Use in-memory neighbors collector primarily; fall back to selected external endpoint only if collector empty */
+  /* Use in-memory neighbors collector only */
   {
     struct autobuf nab;
     if (abuf_init(&nab, 2048) == 0) {
@@ -3412,11 +3412,6 @@ static int h_status(http_request_t *r) {
         if (olsr_neighbors_raw) { memcpy(olsr_neighbors_raw, nab.buf, nab.len); olsr_neighbors_raw[nab.len] = '\0'; olnn = nab.len; }
       }
       abuf_free(&nab);
-    }
-    if (!olsr_neighbors_raw && selected_olsr_ep[0] && !(strstr(selected_olsr_ep, "127.0.0.1") || strstr(selected_olsr_ep, "localhost"))) {
-      char base[256] = ""; const char *u = selected_olsr_ep; const char *p = strstr(u, "://"); if (p) p += 3; else p = u; const char *slash = strchr(p, '/'); size_t baselen = slash ? (size_t)(slash - u) : strlen(u); if (baselen >= sizeof(base)) baselen = sizeof(base)-1; memcpy(base, u, baselen); base[baselen] = '\0';
-      char nb[320]; snprintf(nb, sizeof(nb), "%s/neighbors", base);
-      if (util_http_get_url_local(nb, &olsr_neighbors_raw, &olnn, 1) != 0) { if(olsr_neighbors_raw){ free(olsr_neighbors_raw); olsr_neighbors_raw=NULL; } olnn=0; }
     }
   }
   /* If olsrd2 is running and the default neighbor endpoint returned nothing,
@@ -3439,14 +3434,14 @@ static int h_status(http_request_t *r) {
     }
   }
   /* Prefer in-memory collectors for routes/topology, fallback to selected external endpoint only if needed */
-  char *olsr_routes_raw = NULL; size_t olr = 0; char *olsr_topology_raw = NULL; size_t olt = 0;
+  char *olsr_routes_raw = NULL; char *olsr_topology_raw = NULL;
   {
     struct autobuf rab;
     if (abuf_init(&rab, 4096) == 0) {
       status_collect_routes(&rab);
       if (rab.len > 0) {
         olsr_routes_raw = malloc(rab.len + 1);
-        if (olsr_routes_raw) { memcpy(olsr_routes_raw, rab.buf, rab.len); olsr_routes_raw[rab.len] = '\0'; olr = rab.len; }
+        if (olsr_routes_raw) { memcpy(olsr_routes_raw, rab.buf, rab.len); olsr_routes_raw[rab.len] = '\0'; }
       }
       abuf_free(&rab);
     }
@@ -3455,16 +3450,12 @@ static int h_status(http_request_t *r) {
       status_collect_topology(&tab);
       if (tab.len > 0) {
         olsr_topology_raw = malloc(tab.len + 1);
-        if (olsr_topology_raw) { memcpy(olsr_topology_raw, tab.buf, tab.len); olsr_topology_raw[tab.len] = '\0'; olt = tab.len; }
+        if (olsr_topology_raw) { memcpy(olsr_topology_raw, tab.buf, tab.len); olsr_topology_raw[tab.len] = '\0'; }
       }
       abuf_free(&tab);
     }
-    if ((!olsr_routes_raw || !olsr_topology_raw) && selected_olsr_ep[0] && !(strstr(selected_olsr_ep, "127.0.0.1") || strstr(selected_olsr_ep, "localhost"))) {
-      char base[256] = ""; const char *u = selected_olsr_ep; const char *p = strstr(u, "://"); if (p) p += 3; else p = u; const char *slash = strchr(p, '/'); size_t baselen = slash ? (size_t)(slash - u) : strlen(u); if (baselen >= sizeof(base)) baselen = sizeof(base)-1; memcpy(base, u, baselen); base[baselen] = '\0';
-      char rb[320]; snprintf(rb, sizeof(rb), "%s/routes", base);
-      char tb[320]; snprintf(tb, sizeof(tb), "%s/topology", base);
-      if (!olsr_routes_raw) { if (util_http_get_url_local(rb, &olsr_routes_raw, &olr, 1) != 0) { if (olsr_routes_raw) { free(olsr_routes_raw); olsr_routes_raw = NULL; } olr = 0; } }
-      if (!olsr_topology_raw) { if (util_http_get_url_local(tb, &olsr_topology_raw, &olt, 1) != 0) { if (olsr_topology_raw) { free(olsr_topology_raw); olsr_topology_raw = NULL; } olt = 0; } }
+    if ((!olsr_routes_raw || !olsr_topology_raw)) {
+      /* No fallback; collect ONLY from in-memory core implementation */
     }
   }
 
@@ -3653,7 +3644,7 @@ links_done_plain_fallback:
   APPEND(",\"olsrd4watchdog\":{\"state\":\"%s\"}", olsrd_on?"on":"off");
 
   /* include raw olsr routes JSON when available; avoid including raw neighbors/topology to slim payload */
-  if (olsr_routes_raw && olr>0) { APPEND(",\"olsr_routes_raw\":%s", olsr_routes_raw); }
+  if (olsr_routes_raw) { APPEND(",\"olsr_routes_raw\":%s", olsr_routes_raw); }
 
   if (olsr_links_raw) { free(olsr_links_raw); olsr_links_raw = NULL; }
 
