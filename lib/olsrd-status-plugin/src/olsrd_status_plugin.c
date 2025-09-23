@@ -957,7 +957,7 @@ static char *extract_first_json_value(const char *s) {
 
 /* Note: removed local cached HTTP wrapper; calls to util_http_get_url_local will
  * use the global implementation in src/util.c. The plugin now prefers direct
- * in-memory collectors and no longer intercepts localhost:2006/9090/8123 paths.
+ * in-memory collectors
  */
 
 /* Simple cache for /status/lite responses (kept minimal) */
@@ -3398,17 +3398,7 @@ static int h_status(http_request_t *r) {
       }
       abuf_free(&nab);
     }
-    /* fallback: attempt local HTTP endpoints only if collector produced no data and external endpoints exist */
-    if (!olsr_links_raw) {
-      const char *endpoints[] = {"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
-      for (const char **ep = endpoints; *ep && !olsr_links_raw; ++ep) {
-        if (util_http_get_url_local(*ep, &olsr_links_raw, &oln, 1) == 0 && olsr_links_raw && oln > 0) {
-          snprintf(selected_olsr_ep, sizeof(selected_olsr_ep), "%s", *ep);
-          break;
-        }
-        if (olsr_links_raw) { free(olsr_links_raw); olsr_links_raw = NULL; oln = 0; }
-      }
-    }
+    /* No fallback to OLSR API endpoints; collect ONLY from in-memory core implementation */
   }
 
   char *olsr_neighbors_raw = NULL; size_t olnn = 0;
