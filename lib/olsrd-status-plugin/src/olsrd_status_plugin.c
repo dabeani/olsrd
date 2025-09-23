@@ -383,18 +383,26 @@ static int g_fetch_wait_timeout = 5; /* seconds to wait for deduped requests */
 /* Thread-safe IP -> hostname resolver using getnameinfo */
 static int resolve_ip_to_hostname(const char *ip, char *out, size_t outlen) {
   if (!ip || !out || outlen == 0) return -1;
-  struct sockaddr_in sa; memset(&sa, 0, sizeof(sa)); sa.sin_family = AF_INET;
-  if (inet_pton(AF_INET, ip, &sa.sin_addr) != 1) return -1;
-  char host[NI_MAXHOST]; host[0] = '\0';
-  int rc = getnameinfo((struct sockaddr*)&sa, sizeof(sa), host, sizeof(host), NULL, 0, 0);
-  if (rc != 0) return -1;
-  snprintf(out, outlen, "%s", host);
-  return 0;
+  struct sockaddr_in sa4; memset(&sa4, 0, sizeof(sa4));
+  if (inet_pton(AF_INET, ip, &sa4.sin_addr) == 1) {
+    sa4.sin_family = AF_INET;
+    int rc = getnameinfo((struct sockaddr*)&sa4, sizeof(sa4), out, outlen, NULL, 0, 0);
+    if (rc != 0) return -1;
+    return 0;
+  }
+  struct sockaddr_in6 sa6; memset(&sa6, 0, sizeof(sa6));
+  if (inet_pton(AF_INET6, ip, &sa6.sin6_addr) == 1) {
+    sa6.sin6_family = AF_INET6;
+    int rc = getnameinfo((struct sockaddr*)&sa6, sizeof(sa6), out, outlen, NULL, 0, 0);
+    if (rc != 0) return -1;
+    return 0;
+  }
+  return -1;
 }
 
 /* Cached hostname lookup forward declaration (defined later). Placed here so
  * callers early in the file can use cached lookups without implicit decls. */
-static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen);
+static void lookup_hostname_cached(const char *ip, char *out, size_t outlen);
 
 /* Runtime check for UBNT debug env var. Prefer environment toggle so operators
  * can enable verbose UBNT discovery traces without recompiling. Returns 1 when
@@ -6327,21 +6335,21 @@ static int cache_get(struct kv_cache_entry *cache, const char *key, char *out, s
   return 1;
 }
 
-/* lookup hostname for an ipv4 string using cache, gethostbyaddr and nodedb files/remote as fallback */
-static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
-  if (!ipv4 || !out) return;
+/* lookup hostname for an ip string using cache, gethostbyaddr and nodedb files/remote as fallback */
+static void lookup_hostname_cached(const char *ip, char *out, size_t outlen) {
+  if (!ip || !out) return;
   out[0]=0;
-  if (cache_get(g_host_cache, ipv4, out, outlen)) return;
+  if (cache_get(g_host_cache, ip, out, outlen)) return;
   /* try reverse DNS using thread-safe resolver */
-  if (resolve_ip_to_hostname(ipv4, out, outlen) == 0) {
-    cache_set(g_host_cache, ipv4, out);
+  if (resolve_ip_to_hostname(ip, out, outlen) == 0) {
+    cache_set(g_host_cache, ip, out);
     return;
   }
   /* try cached remote node_db first */
   fetch_remote_nodedb_if_needed();
   if (g_nodedb_cached && g_nodedb_cached_len > 0) {
     char needle[256];
-    if (snprintf(needle, sizeof(needle), "\"%s\":", ipv4) >= (int)sizeof(needle)) {
+    if (snprintf(needle, sizeof(needle), "\"%s\":", ip) >= (int)sizeof(needle)) {
       /* IP address too long, skip */
       goto nothing_found;
     }
@@ -6351,7 +6359,7 @@ static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
       if (hpos) {
         size_t vlen = 0; char *vptr = NULL;
         if (find_json_string_value(hpos, "hostname", &vptr, &vlen)) {
-          size_t copy = vlen < outlen-1 ? vlen : outlen-1; memcpy(out, vptr, copy); out[copy]=0; cache_set(g_host_cache, ipv4, out); return;
+          size_t copy = vlen < outlen-1 ? vlen : outlen-1; memcpy(out, vptr, copy); out[copy]=0; cache_set(g_host_cache, ip, out); return;
         }
       }
       /* fallback to "n" */
@@ -6359,7 +6367,7 @@ static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen) {
       if (npos) {
         size_t vlen2 = 0; char *vptr2 = NULL;
         if (find_json_string_value(npos, "n", &vptr2, &vlen2)) {
-          size_t copy = vlen2 < outlen-1 ? vlen2 : outlen-1; memcpy(out, vptr2, copy); out[copy]=0; cache_set(g_host_cache, ipv4, out); return;
+          size_t copy = vlen2 < outlen-1 ? vlen2 : outlen-1; memcpy(out, vptr2, copy); out[copy]=0; cache_set(g_host_cache, ip, out); return;
         }
       }
     }
