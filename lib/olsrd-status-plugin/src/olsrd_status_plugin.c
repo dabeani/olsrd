@@ -2912,6 +2912,15 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
     if (path_exists(*p)) { strncpy(olsr2_path, *p, sizeof(olsr2_path)-1); olsr2_exists = 1; break; }
   }
 
+  /* If a process is running but no known binary path was found, mark exists
+   * true so the status output doesn't look inconsistent (olsr2_on=true but
+   * olsr2_exists=false). This covers cases like static builds or unusual
+   * install locations where the running process is present but not one of
+   * the candidate filesystem paths we checked.
+   */
+  if (!olsr2_exists && olsr2_on) olsr2_exists = 1;
+  if (!olsrd_exists && olsrd_on) olsrd_exists = 1;
+
   /* autoupdate wizard info */
   const char *au_path = "/etc/cron.daily/autoupdatewizards";
   int auon = path_exists(au_path);
