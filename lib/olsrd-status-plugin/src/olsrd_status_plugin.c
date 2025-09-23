@@ -5022,16 +5022,27 @@ static int h_status_links_live(http_request_t *r) {
     /* else: we are the in-flight worker and should build fresh */
   }
 
-  /* Build fresh links JSON using in-memory collector */
+  /* Build fresh links JSON using OLSR API endpoints (same as h_status_lite) */
   char *links_raw = NULL; size_t links_len = 0;
   {
-    struct autobuf ab; if (abuf_init(&ab, 4096) == 0) {
-      status_collect_links(&ab);
-      if (ab.len > 0) {
-        links_raw = malloc(ab.len + 1);
-        if (links_raw) { memcpy(links_raw, ab.buf, ab.len); links_raw[ab.len] = '\0'; links_len = ab.len; }
+    /* Try OLSR API endpoints first (they return JSON) */
+    const char *endpoints[] = {"http://127.0.0.1:9090/links","http://127.0.0.1:2006/links","http://127.0.0.1:8123/links",NULL};
+    for (const char **ep = endpoints; *ep && !links_raw; ++ep) {
+      if (util_http_get_url_local(*ep, &links_raw, &links_len, 1) == 0 && links_raw && links_len > 0) {
+        break;
       }
-      abuf_free(&ab);
+      if (links_raw) { free(links_raw); links_raw = NULL; links_len = 0; }
+    }
+    /* Fallback: use in-memory collector if no API endpoints responded */
+    if (!links_raw) {
+      struct autobuf ab; if (abuf_init(&ab, 4096) == 0) {
+        status_collect_links(&ab);
+        if (ab.len > 0) {
+          links_raw = malloc(ab.len + 1);
+          if (links_raw) { memcpy(links_raw, ab.buf, ab.len); links_raw[ab.len] = '\0'; links_len = ab.len; }
+        }
+        abuf_free(&ab);
+      }
     }
   }
 
