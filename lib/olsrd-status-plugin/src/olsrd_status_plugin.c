@@ -3353,16 +3353,6 @@ static int h_status(http_request_t *r) {
   char def_ip[64] = ""; char def_dev[64] = "";
   /* prefer IPv4 default by default */
   get_default_ipv4_route(def_ip, sizeof(def_ip), def_dev, sizeof(def_dev));
-  /* If olsr2 is running, attempt to also detect an IPv6 default and prefer it when available */
-  if (olsr2_on) {
-    char def6_ip[128] = ""; char def6_dev[64] = "";
-    get_default_ipv6_route(def6_ip, sizeof(def6_ip), def6_dev, sizeof(def6_dev));
-    /* prefer IPv6 default when olsr2 is present (EdgeRouter uses IPv6 uplink sometimes) */
-    if (def6_ip[0]) {
-      strncpy(def_ip, def6_ip, sizeof(def_ip)-1); def_ip[sizeof(def_ip)-1]=0;
-      if (def6_dev[0]) { strncpy(def_dev, def6_dev, sizeof(def_dev)-1); def_dev[sizeof(def_dev)-1]=0; }
-    }
-  }
 
   {
     unsigned long _de=0,_den=0,_ded=0,_dp=0,_dpn=0,_dpd=0;
