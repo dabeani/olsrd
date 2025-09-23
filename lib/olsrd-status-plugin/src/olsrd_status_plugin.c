@@ -6370,6 +6370,26 @@ static void lookup_hostname_cached(const char *ip, char *out, size_t outlen) {
           size_t copy = vlen2 < outlen-1 ? vlen2 : outlen-1; memcpy(out, vptr2, copy); out[copy]=0; cache_set(g_host_cache, ip, out); return;
         }
       }
+      /* fallback: try to get the value directly after the ip key */
+      const char *p = pos + strlen(needle);
+      while (*p && *p != '"') p++;
+      if (*p == '"') {
+        p++;
+        const char *start = p;
+        while (*p && *p != '"') {
+          if (*p == '\\' && p[1]) p += 2;
+          else p++;
+        }
+        if (*p == '"') {
+          size_t len = (size_t)(p - start);
+          if (len < outlen - 1) {
+            memcpy(out, start, len);
+            out[len] = '\0';
+            cache_set(g_host_cache, ip, out);
+            return;
+          }
+        }
+      }
     }
   }
   /* nothing found */
