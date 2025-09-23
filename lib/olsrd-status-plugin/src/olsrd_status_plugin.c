@@ -767,7 +767,6 @@ static int g_coalesce_links_ttl = 10;
 /* configuration-set flags intentionally omitted: coalescer TTLs accept env/PlParam but do not track PlParam precedence here */
 /* --- end coalescing helper --- */
 
-/* Debug counters for diagnostics */
 /* Debug counters for diagnostics: use C11 atomics when available for lock-free updates */
 #if HAVE_C11_ATOMICS
 static _Atomic unsigned long atom_debug_enqueue_count = 0;
