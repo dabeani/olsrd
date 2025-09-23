@@ -5035,25 +5035,52 @@ static int h_status_links_live(http_request_t *r) {
     }
   }
 
-  if (!links_raw || links_len == 0) {
+  /* Normalize the raw links data to JSON */
+  char *norm_links = NULL; size_t nlinks = 0;
+  if (links_raw && links_len > 0) {
+    if (normalize_olsrd_links(links_raw, &norm_links, &nlinks) != 0) {
+      norm_links = NULL; nlinks = 0;
+      /* Try plain text fallback */
+      if (normalize_olsrd_links_plain(links_raw, &norm_links, &nlinks) != 0) {
+        if (norm_links) { free(norm_links); norm_links = NULL; nlinks = 0; }
+      }
+    }
+  }
+
+  if (!norm_links || nlinks == 0) {
     /* Nothing to serve */
     endpoint_coalesce_finish(&g_links_co, NULL, 0);
-    send_json(r, "[]\n");
+    send_json(r, "{\"links\":[]}\n");
+    if (links_raw) free(links_raw);
     return 0;
   }
 
+  /* Prepare JSON response */
+  size_t json_len = nlinks + 12; /* {"links":...}\n */
+  char *json_response = malloc(json_len + 1);
+  if (!json_response) {
+    endpoint_coalesce_finish(&g_links_co, NULL, 0);
+    if (norm_links) free(norm_links);
+    if (links_raw) free(links_raw);
+    send_json(r, "{\"links\":[]}\n");
+    return 0;
+  }
+  snprintf(json_response, json_len + 1, "{\"links\":%s}\n", norm_links);
+
   /* Prepare a cache copy for coalescer and send response */
-  char *cache_copy = malloc(links_len + 1);
-  if (cache_copy) { memcpy(cache_copy, links_raw, links_len); cache_copy[links_len] = '\0'; }
+  char *cache_copy = malloc(strlen(json_response) + 1);
+  if (cache_copy) { strcpy(cache_copy, json_response); }
   http_send_status(r, 200, "OK");
   http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
-  http_write(r, links_raw, links_len);
+  http_write(r, json_response, strlen(json_response));
 
   /* hand ownership of cache copy to coalescer */
-  if (cache_copy) endpoint_coalesce_finish(&g_links_co, cache_copy, links_len);
+  if (cache_copy) endpoint_coalesce_finish(&g_links_co, cache_copy, strlen(cache_copy));
   else endpoint_coalesce_finish(&g_links_co, NULL, 0);
 
-  free(links_raw);
+  free(json_response);
+  if (norm_links) free(norm_links);
+  if (links_raw) free(links_raw);
   return 0;
 }
 
