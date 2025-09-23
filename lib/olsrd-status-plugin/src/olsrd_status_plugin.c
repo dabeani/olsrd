@@ -522,6 +522,11 @@ static int g_cfg_ubnt_select_timeout_cap_ms_set = 0;
  */
 static int g_ubnt_cache_ttl_s = 300;
 static int g_cfg_ubnt_cache_ttl_s_set = 0;
+/* OLSR2 telnet interface port. Default 8000. Configurable via
+ * PlParam 'olsr2_telnet_port' or env OLSRD_STATUS_OLSR2_TELNET_PORT.
+ */
+static int g_olsr2_telnet_port = 8000;
+static int g_cfg_olsr2_telnet_port_set = 0;
 static int g_cfg_status_lite_ttl_s_set = 0;
 /* Control whether fetch queue operations are logged to stderr (0=no, 1=yes) */
 static int g_fetch_log_queue = 0;
@@ -3058,6 +3063,11 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
   return 0;
 }
 
+/* Build OLSR2 telnet URL with configurable port */
+static void build_olsr2_url(char *buf, size_t bufsize, const char *command) {
+  snprintf(buf, bufsize, "http://127.0.0.1:%d/telnet/%s", g_olsr2_telnet_port, command);
+}
+
 /* Robust detection of olsrd / olsrd2 processes for diverse environments (EdgeRouter, containers, musl) */
 static void detect_olsr_processes(int *out_olsrd, int *out_olsr2) {
   if(out_olsrd) {
@@ -3150,17 +3160,22 @@ static int h_status(http_request_t *r) {
   detect_olsr_processes(&olsrd_on, &olsr2_on);
 
   if (olsr2_on) {
+    char olsr2_url[256];
     /* Get OLSR2 version */
-    util_http_get_url_local("http://127.0.0.1:8000/telnet/olsrv2info%20json%20version", &olsr2_version_raw, &olsr2_version_n, 1);
+    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json version");
+    util_http_get_url_local(olsr2_url, &olsr2_version_raw, &olsr2_version_n, 1);
 
     /* Get OLSR2 time */
-    util_http_get_url_local("http://127.0.0.1:8000/telnet/systeminfo%20json%20time", &olsr2_time_raw, &olsr2_time_n, 1);
+    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "systeminfo json time");
+    util_http_get_url_local(olsr2_url, &olsr2_time_raw, &olsr2_time_n, 1);
 
     /* Get OLSR2 originator */
-    util_http_get_url_local("http://127.0.0.1:8000/telnet/olsrv2info%20json%20originator", &olsr2_originator_raw, &olsr2_originator_n, 1);
+    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json originator");
+    util_http_get_url_local(olsr2_url, &olsr2_originator_raw, &olsr2_originator_n, 1);
 
     /* Get OLSR2 neighbors */
-    util_http_get_url_local("http://127.0.0.1:8000/telnet/nhdpinfo%20json%20link", &olsr2_neighbors_raw, &olsr2_neighbors_n, 1);
+    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo json link");
+    util_http_get_url_local(olsr2_url, &olsr2_neighbors_raw, &olsr2_neighbors_n, 1);
 
     /* Get IPv6 routing table */
     util_exec("/sbin/ip -6 r l proto 100 | grep -v 'default' | awk '{print $3,$1,$5}'", &olsr2_routing6_raw, &olsr2_routing6_n);
@@ -3989,21 +4004,22 @@ static int h_status_lite(http_request_t *r) {
   char *lite_olsr2_neighbors_raw = NULL; size_t lite_olsr2_neighbors_n = 0;
 
   if (lite_olsr2_on) {
-    CHECK_REQ_TIMEOUT_MS(1000);
+    char olsr2_url[256];
     /* Get OLSR2 version */
-    util_http_get_url_local("http://127.0.0.1:8000/telnet/olsrv2info%20json%20version", &lite_olsr2_version_raw, &lite_olsr2_version_n, 1);
+    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json version");
+    util_http_get_url_local(olsr2_url, &lite_olsr2_version_raw, &lite_olsr2_version_n, 1);
 
-    CHECK_REQ_TIMEOUT_MS(1000);
     /* Get OLSR2 time */
-    util_http_get_url_local("http://127.0.0.1:8000/telnet/systeminfo%20json%20time", &lite_olsr2_time_raw, &lite_olsr2_time_n, 1);
+    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "systeminfo json time");
+    util_http_get_url_local(olsr2_url, &lite_olsr2_time_raw, &lite_olsr2_time_n, 1);
 
-    CHECK_REQ_TIMEOUT_MS(1000);
     /* Get OLSR2 originator */
-    util_http_get_url_local("http://127.0.0.1:8000/telnet/olsrv2info%20json%20originator", &lite_olsr2_originator_raw, &lite_olsr2_originator_n, 1);
+    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json originator");
+    util_http_get_url_local(olsr2_url, &lite_olsr2_originator_raw, &lite_olsr2_originator_n, 1);
 
-    CHECK_REQ_TIMEOUT_MS(1000);
     /* Get OLSR2 neighbors */
-    util_http_get_url_local("http://127.0.0.1:8000/telnet/nhdpinfo%20json%20link", &lite_olsr2_neighbors_raw, &lite_olsr2_neighbors_n, 1);
+    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo json link");
+    util_http_get_url_local(olsr2_url, &lite_olsr2_neighbors_raw, &lite_olsr2_neighbors_n, 1);
   }
 
   if (lite_olsr2_version_raw && lite_olsr2_version_n > 0) {
@@ -4765,11 +4781,14 @@ static int h_olsr_links(http_request_t *r) {
   /* Telnet bridge fallbacks for olsrd2 (nhdpinfo) */
   if (olsr2_on && (!neighbors_raw || nnr == 0)) {
     char *tmp = NULL; size_t tlen = 0;
-    if (util_http_get_url_local("http://127.0.0.1:8000/telnet/nhdpinfo%20json%20link", &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
+    char olsr2_url[256];
+    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo json link");
+    if (util_http_get_url_local(olsr2_url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
       neighbors_raw = tmp; nnr = tlen;
     } else { if (tmp) { free(tmp); tmp = NULL; tlen = 0; } }
     if ((!neighbors_raw || nnr == 0)) {
-      if (util_http_get_url_local("http://127.0.0.1:8000/telnet/nhdpinfo%20json%20neighbor", &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
+      build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo json neighbor");
+      if (util_http_get_url_local(olsr2_url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
         neighbors_raw = tmp; nnr = tlen;
       } else { if (tmp) { free(tmp); tmp = NULL; tlen = 0; } }
     }
@@ -4833,7 +4852,9 @@ static int h_olsr_links(http_request_t *r) {
   if (olsr2_on) {
     char *orig_raw = NULL; size_t orig_n = 0;
     /* prefer JSON originator endpoint when available */
-    if (util_http_get_url_local("http://127.0.0.1:8000/telnet/olsrv2info%20json%20originator", &orig_raw, &orig_n, 1) == 0 && orig_raw && orig_n>0) {
+    char olsr2_url[256];
+    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json originator");
+    if (util_http_get_url_local(olsr2_url, &orig_raw, &orig_n, 1) == 0 && orig_raw && orig_n>0) {
   if (g_log_buf_lines > 0) plugin_log_trace("telnet: fetched olsrv2info originator (%zu bytes)", orig_n);
       /* try to extract originator field */
       char originator_v[128] = "";
@@ -5791,6 +5812,7 @@ static int h_diagnostics_json(http_request_t *r) {
       { "ubnt_probe_window_ms", &g_cfg_ubnt_probe_window_ms_set, "OLSRD_STATUS_UBNT_PROBE_WINDOW_MS", "params.ubnt_probe_window_ms.desc" },
       { "ubnt_select_timeout_cap_ms", &g_cfg_ubnt_select_timeout_cap_ms_set, "OLSRD_STATUS_UBNT_SELECT_TIMEOUT_CAP_MS", "params.ubnt_select_timeout_cap_ms.desc" },
       { "ubnt_cache_ttl_s", &g_cfg_ubnt_cache_ttl_s_set, "OLSRD_STATUS_UBNT_CACHE_TTL_S", "params.ubnt_cache_ttl_s.desc" },
+      { "olsr2_telnet_port", &g_cfg_olsr2_telnet_port_set, "OLSRD_STATUS_OLSR2_TELNET_PORT", "params.olsr2_telnet_port.desc" },
   { "arp_cache_ttl_s", NULL, "OLSRD_STATUS_ARP_CACHE_TTL", "params.arp_cache_ttl_s.desc" },
       { "status_lite_ttl_s", &g_cfg_status_lite_ttl_s_set, "OLSRD_STATUS_STATUS_LITE_TTL_S", "params.status_lite_ttl_s.desc" },
       { "status_devices_mode", NULL, "OLSRD_STATUS_STATUS_DEVICES_MODE", "params.status_devices_mode.desc" },
@@ -6522,6 +6544,17 @@ int olsrd_plugin_init(void) {
           g_ubnt_cache_ttl_s = (int)v;
           fprintf(stderr, "[status-plugin] setting ubnt cache ttl from env: %d s\n", g_ubnt_cache_ttl_s);
         } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_UBNT_CACHE_TTL_S value: %s (ignored)\n", env_ct);
+      }
+    }
+    /* olsr2 telnet port override */
+    if (!g_cfg_olsr2_telnet_port_set) {
+      const char *env_port = getenv("OLSRD_STATUS_OLSR2_TELNET_PORT");
+      if (env_port && env_port[0]) {
+        char *endptr = NULL; long v = strtol(env_port, &endptr, 10);
+        if (endptr && *endptr == '\0' && v >= 1 && v <= 65535) {
+          g_olsr2_telnet_port = (int)v;
+          fprintf(stderr, "[status-plugin] setting olsr2 telnet port from env: %d\n", g_olsr2_telnet_port);
+        } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_OLSR2_TELNET_PORT value: %s (ignored)\n", env_port);
       }
     }
     /* status_lite TTL override (seconds) */
@@ -7493,7 +7526,9 @@ static int h_versions_json(http_request_t *r) {
   /* originator: if olsr2 running, try local telnet endpoint */
   if (olsr2_on) {
     char *orig_raw = NULL; size_t orig_n = 0;
-    if (util_http_get_url_local("http://127.0.0.1:8000/telnet/olsrv2info%20originator", &orig_raw, &orig_n, 1) == 0 && orig_raw && orig_n>0) {
+    char olsr2_url[256];
+    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json originator");
+    if (util_http_get_url_local(olsr2_url, &orig_raw, &orig_n, 1) == 0 && orig_raw && orig_n>0) {
       /* take first line that contains ':' */
       char *nl = strchr(orig_raw,'\n'); if (nl) *nl = 0; if (strchr(orig_raw,':')) strncpy(originator, orig_raw, sizeof(originator)-1);
       free(orig_raw);
