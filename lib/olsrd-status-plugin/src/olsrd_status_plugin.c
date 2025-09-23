@@ -3817,39 +3817,39 @@ links_done_plain_fallback:
   if (olsr2_on) {
     if (olsr2_version_raw && olsr2_version_n > 0) {
       if (is_probably_json(olsr2_version_raw, olsr2_version_n)) {
-        APPEND("\"olsr2_version\":%s", olsr2_version_raw);
+        APPEND(",\"olsr2_version\":%s", olsr2_version_raw);
       } else {
-        APPEND("\"olsr2_version\":"); json_append_escaped(&buf, &len, &cap, olsr2_version_raw); APPEND("");
+        APPEND(",\"olsr2_version\":"); json_append_escaped(&buf, &len, &cap, olsr2_version_raw); APPEND("");
       }
     } else {
-      APPEND("\"olsr2_version\":{}");
+      APPEND(",\"olsr2_version\":{}");
     }
     if (olsr2_time_raw && olsr2_time_n > 0) {
       if (is_probably_json(olsr2_time_raw, olsr2_time_n)) {
-        APPEND(",\"olsr2_time\":%s", olsr2_time_raw);
+        APPEND("\"olsr2_time\":%s", olsr2_time_raw);
       } else {
-        APPEND(",\"olsr2_time\":"); json_append_escaped(&buf, &len, &cap, olsr2_time_raw); APPEND("");
+        APPEND("\"olsr2_time\":"); json_append_escaped(&buf, &len, &cap, olsr2_time_raw); APPEND("");
       }
     } else {
-      APPEND(",\"olsr2_time\":{}");
+      APPEND("\"olsr2_time\":{}");
     }
     if (olsr2_originator_raw && olsr2_originator_n > 0) {
       if (is_probably_json(olsr2_originator_raw, olsr2_originator_n)) {
-        APPEND(",\"olsr2_originator\":%s", olsr2_originator_raw);
+        APPEND("\"olsr2_originator\":%s", olsr2_originator_raw);
       } else {
-        APPEND(",\"olsr2_originator\":"); json_append_escaped(&buf, &len, &cap, olsr2_originator_raw); APPEND("");
+        APPEND("\"olsr2_originator\":"); json_append_escaped(&buf, &len, &cap, olsr2_originator_raw); APPEND("");
       }
     } else {
-      APPEND(",\"olsr2_originator\":{}");
+      APPEND("\"olsr2_originator\":{}");
     }
     if (olsr2_neighbors_raw && olsr2_neighbors_n > 0) {
       if (is_probably_json(olsr2_neighbors_raw, olsr2_neighbors_n)) {
-        APPEND(",\"olsr2_neighbors\":%s", olsr2_neighbors_raw);
+        APPEND("\"olsr2_neighbors\":%s", olsr2_neighbors_raw);
       } else {
-        APPEND(",\"olsr2_neighbors\":"); json_append_escaped(&buf, &len, &cap, olsr2_neighbors_raw); APPEND("");
+        APPEND("\"olsr2_neighbors\":"); json_append_escaped(&buf, &len, &cap, olsr2_neighbors_raw); APPEND("");
       }
     } else {
-      APPEND(",\"olsr2_neighbors\":{}");
+      APPEND("\"olsr2_neighbors\":{}");
     }
     APPEND(",\"def6_ip\":"); json_append_escaped(&buf,&len,&cap, def6_ip_olsr2);
     APPEND(",\"def6_dev\":"); json_append_escaped(&buf,&len,&cap, def6_dev_olsr2);
