@@ -200,8 +200,8 @@ LoadPlugin "lib/olsrd-status-plugin/build/olsrd_status.so.1.0"
 ## Plugin Parameters
 * `bind` – listen address (default 127.0.0.1 if not set).
 * `port` – TCP listen port (default 11080 shown above).
-
 * `assetroot` – directory containing `www/` assets (index.html, CSS, JS).
+* `olsr2_telnet_port` – TCP port for OLSR2 telnet interface (default 8000).
 
 ## Environment overrides
 The plugin supports a small set of environment variables that can supply runtime defaults or override configuration in specific cases. Use these from systemd unit files, container run commands, or shell wrappers.
@@ -259,95 +259,189 @@ export OLSRD_STATUS_PLUGIN_ENABLEIPV6=1
 export OLSRD_STATUS_PLUGIN_ASSETROOT="/usr/share/olsrd-status-plugin/www"
 ```
 
+* `OLSRD_STATUS_PLUGIN_ASSETROOT` – path to the directory containing static web assets. Example:
+
+```bash
+export OLSRD_STATUS_PLUGIN_ASSETROOT="/usr/share/olsrd-status-plugin/www"
+```
+
 * `OLSRD_STATUS_FETCH_STARTUP_WAIT` – optional integer seconds to wait during plugin startup for DNS/network readiness before attempting the first remote fetch. Useful in containers where networking may be delayed. Default is 30 seconds.
 
 ```bash
 export OLSRD_STATUS_FETCH_STARTUP_WAIT=60
 ```
 
-Additional runtime tuning (PlParam names available in `olsrd.conf` plugin block):
-* `OLSRD_STATUS_FETCH_QUEUE_MAX` / PlParam `fetch_queue_max` – maximum number of pending fetch requests queued before new non-waiting requests are dropped. Default: 4.
-```bash
-export OLSRD_STATUS_FETCH_QUEUE_MAX=8
-```
-* `log_request_debug` (PlParam) / `OLSRD_STATUS_LOG_REQUEST_DEBUG` or short alias `OLSRD_LOG_REQ_DBG` (env) – optional toggle (0/1) to emit concise per-request debug messages for some endpoints (useful to trace UI fetches like `/status/stats`). Default: 0 (off).
-Example (env):
+* `OLSRD_STATUS_ADMIN_KEY` – admin key for privileged operations (PlParam 'admin_key'). Example:
 
 ```bash
+export OLSRD_STATUS_ADMIN_KEY="your-secret-key"
+```
+
+* `OLSRD_STATUS_LOG_BUF_LINES` – number of log lines to buffer for the /log endpoint. Default: 1000.
+
+```bash
+export OLSRD_STATUS_LOG_BUF_LINES=2000
+```
+
+* `OLSRD_STATUS_LOG_REQUEST_DEBUG` or short alias `OLSRD_LOG_REQ_DBG` – enable concise per-request debug messages for HTTP endpoints. Default: 0 (off).
+
+```bash
+export OLSRD_STATUS_LOG_REQUEST_DEBUG=1
+# or
 export OLSRD_LOG_REQ_DBG=1
 ```
 
-* `OLSRD_STATUS_FETCH_RETRIES` / PlParam `fetch_retries` – number of retry attempts the background fetch worker will make on transient failures. Default: 3.
+* `OLSRD_STATUS_FETCH_QUEUE_MAX` – maximum number of pending fetch requests queued before new non-waiting requests are dropped. Default: 4.
+
+```bash
+export OLSRD_STATUS_FETCH_QUEUE_MAX=8
+```
+
+* `OLSRD_STATUS_FETCH_RETRIES` – number of retry attempts the background fetch worker will make on transient failures. Default: 3.
 
 ```bash
 export OLSRD_STATUS_FETCH_RETRIES=5
 ```
 
-Discovery tuning (PlParam names available in `olsrd.conf` plugin block):
-
-* `OLSRD_STATUS_DISCOVER_INTERVAL` / PlParam `discover_interval` – automatic devices discovery interval in seconds. Default: 300s. Valid range: 5 - 86400 (1 day).
-
-export OLSRD_STATUS_DISCOVER_INTERVAL=300
-```
-
-* `OLSRD_STATUS_UBNT_PROBE_WINDOW_MS` / PlParam `ubnt_probe_window_ms` – per‑interface UBNT probe collection window in milliseconds (the discover probe is retransmitted at about half this window, min 100ms). Default: 1000 ms. Valid range: 100 - 60000.
-
-```bash
-```
-
-* `OLSRD_STATUS_UBNT_SELECT_TIMEOUT_CAP_MS` / PlParam `ubnt_select_timeout_cap_ms` – cap (milliseconds) applied to the select() timeout used during UBNT discovery socket waits. This limits per-iteration sleep to avoid long blocking when adaptive timeouts are calculated; useful to reduce worst-case latency in discovery loops. Default: 100 ms. Valid range: 1 - 10000.
-
-```bash
-export OLSRD_STATUS_UBNT_SELECT_TIMEOUT_CAP_MS=200
-```
-
-Example `olsrd.conf` plugin block (pasteable):
-
-```
-LoadPlugin "lib/olsrd-status-plugin/build/olsrd_status.so.1.0"
-{
-    PlParam "port"       "11080"
-    PlParam "assetroot"  "/usr/share/olsrd-status-plugin/www"
-    # Discovery tuning (PlParam wins over environment variables)
-    PlParam "discover_interval" "300"            # seconds
-    PlParam "ubnt_probe_window_ms" "1000"       # milliseconds
-}
-
-# Example: tune the UBNT discovery select timeout cap
-# You can set the cap (in milliseconds) so the discovery loop will not block
-# longer than this value on select() calls. PlParam in olsrd.conf takes
-# precedence over the environment variable.
-LoadPlugin "lib/olsrd-status-plugin/build/olsrd_status.so.1.0"
-{
-    PlParam "port" "11080"
-    PlParam "assetroot" "/usr/share/olsrd-status-plugin/www"
-    PlParam "discover_interval" "300"
-    PlParam "ubnt_probe_window_ms" "1000"
-    # Set select timeout cap to 200ms (valid range: 1-10000)
-    PlParam "ubnt_select_timeout_cap_ms" "200"
-}
-```
-
-* `OLSRD_STATUS_FETCH_BACKOFF_INITIAL` / PlParam `fetch_backoff_initial` – initial backoff in seconds used when retrying; backoff doubles each attempt. Default: 1.
+* `OLSRD_STATUS_FETCH_BACKOFF_INITIAL` – initial backoff in seconds used when retrying; backoff doubles each attempt. Default: 1.
 
 ```bash
 export OLSRD_STATUS_FETCH_BACKOFF_INITIAL=2
 ```
 
-Precedence: for all of the above the plugin parameter `PlParam` in `olsrd.conf` wins when present; otherwise the corresponding environment variable is used; otherwise the compiled default applies.
+* `OLSRD_STATUS_FETCH_QUEUE_WARN` – warning threshold for fetch queue length. Default: 10.
 
-### Discovery / devices specific tuning
+```bash
+export OLSRD_STATUS_FETCH_QUEUE_WARN=20
+```
 
-* `OLSRD_STATUS_UBNT_CACHE_TTL_S` / PlParam `ubnt_cache_ttl_s` – TTL (seconds) for the normalized UBNT discovery cache. Default: 300.
-* `OLSRD_STATUS_DISCOVER_INTERVAL` / PlParam `discover_interval` – (already documented above) controls how often a new active discovery cycle runs.
-* `OLSRD_STATUS_ALLOW_ARP_FALLBACK` / PlParam `allow_arp_fallback` – when set to `1` allows ARP‑synthesized devices in broader status aggregations (not `/devices.json`). Default: 0.
-* `OLSRD_STATUS_ARP_CACHE_TTL_S` / PlParam `arp_cache_ttl_s` – TTL (seconds) for the internal ARP JSON cache used when ARP fallback is enabled. Default: 5.
-* `OLSRD_STATUS_STATUS_DEVICES_MODE` / PlParam `status_devices_mode` – controls whether `/status` embeds the (potentially large) devices array: `0` omit devices, `1` include full list (default), `2` include only summary counts.
-* `OLSRD_STATUS_COALESCE_DEVICES_TTL` / PlParam `coalesce_devices_ttl` – TTL (seconds) for coalescing `/devices.json` responses. Default: 30.
-* `OLSRD_STATUS_COALESCE_DISCOVER_TTL` / PlParam `coalesce_discover_ttl` – TTL (seconds) for coalescing discovery operations. Default: 30.
-* `OLSRD_STATUS_COALESCE_TRACEROUTE_TTL` / PlParam `coalesce_traceroute_ttl` – TTL (seconds) for coalescing traceroute operations. Default: 30.
+* `OLSRD_STATUS_FETCH_QUEUE_CRIT` – critical threshold for fetch queue length. Default: 50.
 
-These parameters let you tune payload size and refresh behavior independently: for example you can keep a short ARP cache TTL for fresher MAC/IP correlation while keeping a longer UBNT discovery TTL when device metadata changes rarely.
+```bash
+export OLSRD_STATUS_FETCH_QUEUE_CRIT=100
+```
+
+* `OLSRD_STATUS_FETCH_DROPPED_WARN` – warning threshold for dropped fetch requests. Default: 10.
+
+```bash
+export OLSRD_STATUS_FETCH_DROPPED_WARN=20
+```
+
+* `OLSRD_STATUS_FETCH_REPORT_INTERVAL` – periodic summary interval in seconds for fetch metrics. 0 to disable. Default: 0.
+
+```bash
+export OLSRD_STATUS_FETCH_REPORT_INTERVAL=60
+```
+
+* `OLSRD_STATUS_FETCH_AUTO_REFRESH_MS` – auto-refresh interval (milliseconds) suggested for UI. 0 means disabled. Default: 0.
+
+```bash
+export OLSRD_STATUS_FETCH_AUTO_REFRESH_MS=5000
+```
+
+* `OLSRD_STATUS_FETCH_LOG_QUEUE` – enable detailed fetch queue logging. Default: 0 (off).
+
+```bash
+export OLSRD_STATUS_FETCH_LOG_QUEUE=1
+```
+
+* `OLSRD_STATUS_FETCH_LOG_FORCE` or `OLSRD_STATUS_FETCH_LOG_UNSILENCE` – force fetch queue logging on regardless of other settings. Default: 0 (off).
+
+```bash
+export OLSRD_STATUS_FETCH_LOG_FORCE=1
+# or
+export OLSRD_STATUS_FETCH_LOG_UNSILENCE=1
+```
+
+* `OLSRD_STATUS_DISCOVER_INTERVAL` – automatic device discovery interval in seconds. Default: 300. Valid range: 5 - 86400.
+
+```bash
+export OLSRD_STATUS_DISCOVER_INTERVAL=600
+```
+
+* `OLSRD_STATUS_UBNT_PROBE_WINDOW_MS` – per-interface UBNT probe collection window in milliseconds. Default: 1000. Valid range: 100 - 60000.
+
+```bash
+export OLSRD_STATUS_UBNT_PROBE_WINDOW_MS=2000
+```
+
+* `OLSRD_STATUS_UBNT_SELECT_TIMEOUT_CAP_MS` – cap (milliseconds) applied to the select() timeout used during UBNT discovery. Default: 100. Valid range: 1 - 10000.
+
+```bash
+export OLSRD_STATUS_UBNT_SELECT_TIMEOUT_CAP_MS=200
+```
+
+* `OLSRD_STATUS_UBNT_CACHE_TTL_S` – TTL (seconds) for the normalized UBNT discovery cache. Default: 300.
+
+```bash
+export OLSRD_STATUS_UBNT_CACHE_TTL_S=600
+```
+
+* `OLSRD_STATUS_ALLOW_ARP_FALLBACK` – when set to 1 allows ARP-synthesized devices in broader status aggregations. Default: 0.
+
+```bash
+export OLSRD_STATUS_ALLOW_ARP_FALLBACK=1
+```
+
+* `OLSRD_STATUS_ARP_CACHE_TTL_S` – TTL (seconds) for the internal ARP JSON cache. Default: 5.
+
+```bash
+export OLSRD_STATUS_ARP_CACHE_TTL_S=10
+```
+
+* `OLSRD_STATUS_STATUS_DEVICES_MODE` – controls whether /status embeds the devices array: 0=omit, 1=include full list (default), 2=include only summary counts.
+
+```bash
+export OLSRD_STATUS_STATUS_DEVICES_MODE=2
+```
+
+* `OLSRD_STATUS_COALESCE_DEVICES_TTL` – TTL (seconds) for coalescing /devices.json responses. Default: 30.
+
+```bash
+export OLSRD_STATUS_COALESCE_DEVICES_TTL=60
+```
+
+* `OLSRD_STATUS_COALESCE_DISCOVER_TTL` – TTL (seconds) for coalescing discovery operations. Default: 30.
+
+```bash
+export OLSRD_STATUS_COALESCE_DISCOVER_TTL=60
+```
+
+* `OLSRD_STATUS_COALESCE_TRACEROUTE_TTL` – TTL (seconds) for coalescing traceroute operations. Default: 30.
+
+```bash
+export OLSRD_STATUS_COALESCE_TRACEROUTE_TTL=60
+```
+
+* `OLSRD_STATUS_OLSR2_TELNET_PORT` – TCP port for OLSR2 telnet interface. Default: 8000.
+
+```bash
+export OLSRD_STATUS_OLSR2_TELNET_PORT=9000
+```
+
+* `OLSRD_STATUS_ACCESS_LOG` – enable access logging for HTTP requests. Default: 0 (off).
+
+```bash
+export OLSRD_STATUS_ACCESS_LOG=1
+```
+
+* `OLSRD_STATUS_THREAD_POOL` – enable thread pool for HTTP request handling. Default: 0 (off).
+
+```bash
+export OLSRD_STATUS_THREAD_POOL=1
+```
+
+* `OLSRD_STATUS_THREAD_POOL_SIZE` – size of the HTTP thread pool when enabled. Default: 4.
+
+```bash
+export OLSRD_STATUS_THREAD_POOL_SIZE=8
+```
+
+* `OLSRD_STATUS_DEBUG_NODEDB` – enable debug logging for NodeDB operations. Default: 0 (off).
+
+```bash
+export OLSRD_STATUS_DEBUG_NODEDB=1
+```
 
 Logging and debugging
 
@@ -381,6 +475,18 @@ Runtime environment variables (examples)
 - `OLSRD_STATUS_ALLOW_ARP_FALLBACK` (0/1)
     - Default: `0` (OFF). When set to `1` the plugin will allow synthesis of device entries from the local ARP table and may include those ARP-derived entries in aggregate status payloads when the code-paths opt-in to ARP fallback (for example the full `/status` output can include ARP-derived devices when enabled).
     - Important: some discovery-specific endpoints intentionally exclude ARP-derived entries to avoid polluting discovery responses. Notably `/discover/ubnt` and `/devices` will not include ARP-synthesized devices regardless of this flag. Use this toggle when you explicitly want ARP-derived supplemental entries in aggregated status views.
+
+- `OLSRD_STATUS_DEBUG_NODEDB=1`
+    - Enable debug logging for NodeDB operations, useful for troubleshooting remote node database fetching and caching.
+
+- `OLSRD_STATUS_ACCESS_LOG=1`
+    - Enable access logging for all HTTP requests, showing client IPs, request methods, and response codes.
+
+- `OLSRD_STATUS_THREAD_POOL=1`
+    - Enable thread pool for HTTP request handling to improve concurrency. Requires `OLSRD_STATUS_THREAD_POOL_SIZE` to be set.
+
+- `OLSRD_STATUS_THREAD_POOL_SIZE=N`
+    - Set the size of the HTTP thread pool when thread pool is enabled. Default: 4.
 
 Enabling these in systemd (example)
 
