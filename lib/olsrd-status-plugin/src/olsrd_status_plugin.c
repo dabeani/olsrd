@@ -3065,7 +3065,44 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
 
 /* Build OLSR2 telnet URL with configurable port */
 static void build_olsr2_url(char *buf, size_t bufsize, const char *command) {
-  snprintf(buf, bufsize, "http://127.0.0.1:%d/telnet/%s", g_olsr2_telnet_port, command);
+  /* Percent-encode spaces in the telnet command so the local HTTP server
+   * receives the intended arguments rather than treating them as path
+   * separators. We only need to encode spaces here because commands are
+   * simple (e.g. "olsrv2info json originator"), but keep it small and
+   * defensive.
+   */
+  char enc[512];
+  const char *s = command;
+  char *d = enc;
+  size_t rem = sizeof(enc) - 1;
+  while (*s && rem > 0) {
+    if (*s == ' ') {
+      if (rem < 3) break;
+      *d++ = '%'; *d++ = '2'; *d++ = '0';
+      rem -= 3;
+    } else {
+      *d++ = *s;
+      rem--;
+    }
+    s++;
+  }
+  *d = '\0';
+  snprintf(buf, bufsize, "http://127.0.0.1:%d/telnet/%s", g_olsr2_telnet_port, enc);
+}
+
+/* Detect simple HTML/HTTP error responses so we don't embed them into JSON
+ * (many telnet bridges return an HTML 400 page on bad requests). We only
+ * need a lightweight check: HTML starts with '<' or contains the phrase
+ * "HTTP error". Returns 1 when content looks like HTML error, 0 otherwise.
+ */
+static int is_html_error(const char *buf, size_t n) {
+  if (!buf || n == 0) return 0;
+  /* skip leading whitespace */
+  size_t i = 0; while (i < n && (buf[i] == '\n' || buf[i] == '\r' || buf[i] == ' ' || buf[i] == '\t')) i++;
+  if (i < n && buf[i] == '<') return 1;
+  /* simple substring search for HTTP error strings */
+  if (n >= 10 && strstr(buf, "HTTP error") != NULL) return 1;
+  return 0;
 }
 
 /* Robust detection of olsrd / olsrd2 processes for diverse environments (EdgeRouter, containers, musl) */
@@ -3161,21 +3198,25 @@ static int h_status(http_request_t *r) {
 
   if (olsr2_on) {
     char olsr2_url[256];
-    /* Get OLSR2 version */
-    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json version");
-    util_http_get_url_local(olsr2_url, &olsr2_version_raw, &olsr2_version_n, 1);
+  /* Get OLSR2 version */
+  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "systeminfo json version");
+  util_http_get_url_local(olsr2_url, &olsr2_version_raw, &olsr2_version_n, 1);
+  if (is_html_error(olsr2_version_raw, olsr2_version_n)) { free(olsr2_version_raw); olsr2_version_raw = NULL; olsr2_version_n = 0; }
 
     /* Get OLSR2 time */
-    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "systeminfo json time");
-    util_http_get_url_local(olsr2_url, &olsr2_time_raw, &olsr2_time_n, 1);
+  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "systeminfo json time");
+  util_http_get_url_local(olsr2_url, &olsr2_time_raw, &olsr2_time_n, 1);
+  if (is_html_error(olsr2_time_raw, olsr2_time_n)) { free(olsr2_time_raw); olsr2_time_raw = NULL; olsr2_time_n = 0; }
 
     /* Get OLSR2 originator */
-    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json originator");
-    util_http_get_url_local(olsr2_url, &olsr2_originator_raw, &olsr2_originator_n, 1);
+  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json originator");
+  util_http_get_url_local(olsr2_url, &olsr2_originator_raw, &olsr2_originator_n, 1);
+  if (is_html_error(olsr2_originator_raw, olsr2_originator_n)) { free(olsr2_originator_raw); olsr2_originator_raw = NULL; olsr2_originator_n = 0; }
 
     /* Get OLSR2 neighbors */
-    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo json link");
-    util_http_get_url_local(olsr2_url, &olsr2_neighbors_raw, &olsr2_neighbors_n, 1);
+  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo json link");
+  util_http_get_url_local(olsr2_url, &olsr2_neighbors_raw, &olsr2_neighbors_n, 1);
+  if (is_html_error(olsr2_neighbors_raw, olsr2_neighbors_n)) { free(olsr2_neighbors_raw); olsr2_neighbors_raw = NULL; olsr2_neighbors_n = 0; }
 
     /* Get IPv6 routing table */
     util_exec("/sbin/ip -6 r l proto 100 | grep -v 'default' | awk '{print $3,$1,$5}'", &olsr2_routing6_raw, &olsr2_routing6_n);
@@ -4005,21 +4046,25 @@ static int h_status_lite(http_request_t *r) {
 
   if (lite_olsr2_on) {
     char olsr2_url[256];
-    /* Get OLSR2 version */
-    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json version");
-    util_http_get_url_local(olsr2_url, &lite_olsr2_version_raw, &lite_olsr2_version_n, 1);
+  /* Get OLSR2 version */
+  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "systeminfo json version");
+  util_http_get_url_local(olsr2_url, &lite_olsr2_version_raw, &lite_olsr2_version_n, 1);
+  if (is_html_error(lite_olsr2_version_raw, lite_olsr2_version_n)) { free(lite_olsr2_version_raw); lite_olsr2_version_raw = NULL; lite_olsr2_version_n = 0; }
 
     /* Get OLSR2 time */
-    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "systeminfo json time");
-    util_http_get_url_local(olsr2_url, &lite_olsr2_time_raw, &lite_olsr2_time_n, 1);
+  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "systeminfo json time");
+  util_http_get_url_local(olsr2_url, &lite_olsr2_time_raw, &lite_olsr2_time_n, 1);
+  if (is_html_error(lite_olsr2_time_raw, lite_olsr2_time_n)) { free(lite_olsr2_time_raw); lite_olsr2_time_raw = NULL; lite_olsr2_time_n = 0; }
 
     /* Get OLSR2 originator */
-    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json originator");
-    util_http_get_url_local(olsr2_url, &lite_olsr2_originator_raw, &lite_olsr2_originator_n, 1);
+  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json originator");
+  util_http_get_url_local(olsr2_url, &lite_olsr2_originator_raw, &lite_olsr2_originator_n, 1);
+  if (is_html_error(lite_olsr2_originator_raw, lite_olsr2_originator_n)) { free(lite_olsr2_originator_raw); lite_olsr2_originator_raw = NULL; lite_olsr2_originator_n = 0; }
 
     /* Get OLSR2 neighbors */
-    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo json link");
-    util_http_get_url_local(olsr2_url, &lite_olsr2_neighbors_raw, &lite_olsr2_neighbors_n, 1);
+  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo json link");
+  util_http_get_url_local(olsr2_url, &lite_olsr2_neighbors_raw, &lite_olsr2_neighbors_n, 1);
+  if (is_html_error(lite_olsr2_neighbors_raw, lite_olsr2_neighbors_n)) { free(lite_olsr2_neighbors_raw); lite_olsr2_neighbors_raw = NULL; lite_olsr2_neighbors_n = 0; }
   }
 
   if (lite_olsr2_version_raw && lite_olsr2_version_n > 0) {
