@@ -3014,7 +3014,8 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
   }
   pthread_mutex_unlock(&versions_cache_lock);
   char host[256] = ""; gethostname(host, sizeof(host)); host[sizeof(host)-1]=0;
-  int olsrd_on=0, olsr2_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
+  /* detect OLSR process state */
+  int olsr2_on = 0, olsrd_on = 0; detect_olsr_processes(&olsrd_on, &olsr2_on);
   /* detect whether olsrd / olsrd2 binaries exist on filesystem (best-effort) */
   /* detect whether olsrd / olsrd2 binaries exist on filesystem (best-effort)
    * store both a boolean and the first matching path so callers can use the
@@ -3233,6 +3234,9 @@ static int h_status(http_request_t *r) {
   char *buf = NULL; size_t cap = 16384, len = 0; buf = malloc(cap); if(!buf){ send_json(r, "{}\n"); return 0; } buf[0]=0;
   #define APPEND(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { free(buf); send_json(r,"{}\n"); return 0; } } while(0)
 
+  /* detect OLSR process state */
+  int olsr2_on = 0, olsrd_on = 0; detect_olsr_processes(&olsrd_on, &olsr2_on);
+
   /* Build JSON */
   APPEND("{");
 
@@ -3270,7 +3274,6 @@ static int h_status(http_request_t *r) {
   char traceroute6_to[256] = "2001:4860:4860::8888"; /* Google DNS IPv6 */
 
   /* detect OLSR process state to decide whether to prefer IPv6 default when olsr2 is present */
-  int olsr2_on = 0, olsrd_on = 0;
   detect_olsr_processes(&olsrd_on, &olsr2_on);
 
   if (olsr2_on) {
