@@ -4850,23 +4850,70 @@ static int h_status_links_live(http_request_t *r) {
     /* else: we are the in-flight worker and should build fresh */
   }
 
-  /* Build fresh links JSON using only in-memory collector */
+  /* Build fresh links JSON using in-memory collectors for links, routes, and topology */
   char *links_raw = NULL; size_t links_len = 0;
+  char *routes_raw = NULL; size_t routes_len = 0;
+  char *topology_raw = NULL; size_t topology_len = 0;
   {
-    /* Use only in-memory collector */
-    struct autobuf ab; if (abuf_init(&ab, 4096) == 0) {
-      status_collect_links(&ab);
-      if (ab.len > 0) {
-        links_raw = malloc(ab.len + 1);
-        if (links_raw) { memcpy(links_raw, ab.buf, ab.len); links_raw[ab.len] = '\0'; links_len = ab.len; }
+    /* Use in-memory collectors for all OLSR data needed for proper link normalization */
+    struct autobuf lab; if (abuf_init(&lab, 4096) == 0) {
+      status_collect_links(&lab);
+      if (lab.len > 0) {
+        links_raw = malloc(lab.len + 1);
+        if (links_raw) { memcpy(links_raw, lab.buf, lab.len); links_raw[lab.len] = '\0'; links_len = lab.len; }
       }
-      abuf_free(&ab);
+      abuf_free(&lab);
+    }
+    struct autobuf rab; if (abuf_init(&rab, 4096) == 0) {
+      status_collect_routes(&rab);
+      if (rab.len > 0) {
+        routes_raw = malloc(rab.len + 1);
+        if (routes_raw) { memcpy(routes_raw, rab.buf, rab.len); routes_raw[rab.len] = '\0'; routes_len = rab.len; }
+      }
+      abuf_free(&rab);
+    }
+    struct autobuf tab; if (abuf_init(&tab, 4096) == 0) {
+      status_collect_topology(&tab);
+      if (tab.len > 0) {
+        topology_raw = malloc(tab.len + 1);
+        if (topology_raw) { memcpy(topology_raw, tab.buf, tab.len); topology_raw[tab.len] = '\0'; topology_len = tab.len; }
+      }
+      abuf_free(&tab);
     }
   }
 
-  /* Normalize the raw links data to JSON */
-  char *norm_links = NULL; size_t nlinks = 0;
+  /* Combine all raw data for normalization (same as main /status endpoint) */
+  char *combined_raw = NULL;
   if (links_raw && links_len > 0) {
+    size_t total_len = links_len + routes_len + topology_len + 8; /* +8 for separators */
+    combined_raw = malloc(total_len + 1);
+    if (combined_raw) {
+      size_t off = 0;
+      memcpy(combined_raw + off, links_raw, links_len); off += links_len;
+      combined_raw[off++] = '\n';
+      if (routes_len > 0) {
+        memcpy(combined_raw + off, routes_raw, routes_len); off += routes_len;
+        combined_raw[off++] = '\n';
+      }
+      if (topology_len > 0) {
+        memcpy(combined_raw + off, topology_raw, topology_len); off += topology_len;
+      }
+      combined_raw[off] = '\0';
+    }
+  }
+
+  /* Normalize the combined raw data to JSON */
+  char *norm_links = NULL; size_t nlinks = 0;
+  if (combined_raw) {
+    if (normalize_olsrd_links(combined_raw, &norm_links, &nlinks) != 0) {
+      norm_links = NULL; nlinks = 0;
+      /* Try plain text fallback */
+      if (normalize_olsrd_links_plain(combined_raw, &norm_links, &nlinks) != 0) {
+        if (norm_links) { free(norm_links); norm_links = NULL; nlinks = 0; }
+      }
+    }
+  } else if (links_raw && links_len > 0) {
+    /* Fallback: try with just links data if combined failed */
     if (normalize_olsrd_links(links_raw, &norm_links, &nlinks) != 0) {
       norm_links = NULL; nlinks = 0;
       /* Try plain text fallback */
@@ -4881,6 +4928,9 @@ static int h_status_links_live(http_request_t *r) {
     endpoint_coalesce_finish(&g_links_co, NULL, 0);
     send_json_response(r, "{\"links\":[]}\n");
     if (links_raw) free(links_raw);
+    if (routes_raw) free(routes_raw);
+    if (topology_raw) free(topology_raw);
+    if (combined_raw) free(combined_raw);
     return 0;
   }
 
@@ -4891,6 +4941,9 @@ static int h_status_links_live(http_request_t *r) {
     endpoint_coalesce_finish(&g_links_co, NULL, 0);
     if (norm_links) free(norm_links);
     if (links_raw) free(links_raw);
+    if (routes_raw) free(routes_raw);
+    if (topology_raw) free(topology_raw);
+    if (combined_raw) free(combined_raw);
     send_json_response(r, "{\"links\":[]}\n");
     return 0;
   }
@@ -4910,6 +4963,9 @@ static int h_status_links_live(http_request_t *r) {
   free(json_response);
   if (norm_links) free(norm_links);
   if (links_raw) free(links_raw);
+  if (routes_raw) free(routes_raw);
+  if (topology_raw) free(topology_raw);
+  if (combined_raw) free(combined_raw);
   return 0;
 }
 
