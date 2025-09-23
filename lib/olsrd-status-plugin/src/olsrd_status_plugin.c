@@ -4226,7 +4226,8 @@ static int h_status_lite(http_request_t *r) {
           char *combined = malloc(rab.len + 1);
           if (combined) { memcpy(combined, rab.buf, rab.len); combined[rab.len] = '\0';
             char *norm = NULL; size_t nn = 0;
-            if (normalize_olsrd_links(combined, &norm, &nn) == 0 && norm && nn > 0) {
+            if ((normalize_olsrd_links(combined, &norm, &nn) == 0 && norm && nn > 0) ||
+                (normalize_olsrd_links_plain(combined, &norm, &nn) == 0 && norm && nn > 0)) {
               unsigned long sum_routes = 0, sum_nodes = 0;
               const char *p = norm;
               while ((p = strstr(p, "\"routes\":")) != NULL) {
