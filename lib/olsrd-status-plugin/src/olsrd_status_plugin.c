@@ -2159,7 +2159,8 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   }
   if (parsed == 0) {
     /* broad fallback: scan objects manually */
-    if (!util_buffer_reset(&buf, &len, &cap, 4096)) return -1; json_buf_append(&buf,&len,&cap,"["); first=1;
+    if (!util_buffer_reset(&buf, &len, &cap, 4096)) return -1;
+    json_buf_append(&buf,&len,&cap,"["); first=1;
     const char *scan = raw; int safety=0;
     while((scan=strchr(scan,'{')) && safety<500) {
       safety++; const char *obj=scan; int od=0; const char *r=obj; while(*r){ if(*r=='{') od++; else if(*r=='}'){ od--; if(od==0){ r++; break; } } r++; }
