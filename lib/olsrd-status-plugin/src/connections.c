@@ -152,6 +152,9 @@ int render_connections_plain(char **buf_out, size_t *len_out){
     }
   }
   fprintf(stderr, "[render_connections] loaded %d arp rows (arps=%p)\n", na, (void*)arps);
+  for (int a = 0; a < na; a++) {
+    fprintf(stderr, "[render_connections] arp[%d]: ip=%s mac=%s dev=%s\n", a, arps[a].ip, arps[a].mac, arps[a].dev);
+  }
 
   APPEND("# connections (plugin)\n");
   if (nb>0){
@@ -228,33 +231,30 @@ int render_connections_json(char **buf_out, size_t *len_out){
       if (ports) {
         np = bridge_ports(bridges[i], ports, 64);
         for (int p = 0; p < np; p++) {
+          fprintf(stderr, "[render_connections_json] processing port %s on bridge %s\n", ports[p], bridges[i]);
           /* collect macs and ips for this port */
           int mac_count = 0; int ip_count = 0;
           char macs[64][64]; char ips[64][64];
+          
+          /* Always add the port's sysfs MAC */
+          char port_mac[64] = "";
+          if (read_sysfs_mac(ports[p], port_mac, sizeof(port_mac))) {
+            snprintf(macs[mac_count], sizeof(macs[0]), "%s", port_mac); 
+            mac_count++;
+            fprintf(stderr, "[render_connections_json] added sysfs mac %s for port %s\n", port_mac, ports[p]);
+          }
+          
+          /* Collect IPs from ARP entries on the bridge device */
           for (int a = 0; a < na; a++) {
-            if (arps && strcmp(arps[a].dev, ports[p]) == 0) {
-              /* add mac */
-              int dup = 0; for (int k=0;k<mac_count;k++) if (strcmp(macs[k], arps[a].mac)==0) dup=1;
-              if (!dup) { snprintf(macs[mac_count], sizeof(macs[0]), "%s", arps[a].mac); mac_count++; }
+            if (arps && strcmp(arps[a].dev, bridges[i]) == 0) {
+              fprintf(stderr, "[render_connections_json] found arp[%d] on bridge %s: ip=%s mac=%s dev=%s\n", a, bridges[i], arps[a].ip, arps[a].mac, arps[a].dev);
               /* add ip */
-              int dup2 = 0; for (int k=0;k<ip_count;k++) if (strcmp(ips[k], arps[a].ip)==0) dup2=1;
-              if (!dup2) { snprintf(ips[ip_count], sizeof(ips[0]), "%s", arps[a].ip); ip_count++; }
-            }
-          }
-          /* Fallbacks when ARP had no entries for this port: read sysfs MAC and getifaddrs IPs */
-          if (mac_count == 0) {
-            char macbuf[64] = "";
-            if (read_sysfs_mac(ports[p], macbuf, sizeof(macbuf))) {
-              snprintf(macs[mac_count], sizeof(macs[0]), "%s", macbuf); mac_count++;
-            }
-          }
-          if (ip_count == 0) {
-            char ipbufs[64][64]; int got = collect_ifaddrs_ipv4(ports[p], ipbufs, 64);
-            for (int ii=0; ii<got && ip_count < 64; ii++) { snprintf(ips[ip_count], sizeof(ips[0]), "%.*s", (int)(sizeof(ips[0]) - 1), ipbufs[ii]); ip_count++; }
-            /* For bridge ports, also check the bridge interface for IPs */
-            if (ip_count == 0) {
-              got = collect_ifaddrs_ipv4(bridges[i], ipbufs, 64);
-              for (int ii=0; ii<got && ip_count < 64; ii++) { snprintf(ips[ip_count], sizeof(ips[0]), "%.*s", (int)(sizeof(ips[0]) - 1), ipbufs[ii]); ip_count++; }
+              int dup = 0; for (int k=0;k<ip_count;k++) if (strcmp(ips[k], arps[a].ip)==0) dup=1;
+              if (!dup) { 
+                snprintf(ips[ip_count], sizeof(ips[0]), "%s", arps[a].ip); 
+                ip_count++; 
+                fprintf(stderr, "[render_connections_json] added ip %s for port %s\n", arps[a].ip, ports[p]);
+              }
             }
           }
           if (!first_port) JAPPEND(",");
