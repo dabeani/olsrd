@@ -3817,12 +3817,12 @@ links_done_plain_fallback:
   if (olsr2_on) {
     if (olsr2_version_raw && olsr2_version_n > 0) {
       if (is_probably_json(olsr2_version_raw, olsr2_version_n)) {
-        APPEND(",\"olsr2_version\":%s", olsr2_version_raw);
+        APPEND("\"olsr2_version\":%s", olsr2_version_raw);
       } else {
-        APPEND(",\"olsr2_version\":"); json_append_escaped(&buf, &len, &cap, olsr2_version_raw); APPEND("");
+        APPEND("\"olsr2_version\":"); json_append_escaped(&buf, &len, &cap, olsr2_version_raw); APPEND("");
       }
     } else {
-      APPEND(",\"olsr2_version\":{}");
+      APPEND("\"olsr2_version\":{}");
     }
     if (olsr2_time_raw && olsr2_time_n > 0) {
       if (is_probably_json(olsr2_time_raw, olsr2_time_n)) {
