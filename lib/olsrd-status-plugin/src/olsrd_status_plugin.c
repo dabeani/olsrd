@@ -3980,7 +3980,7 @@ static int h_status_lite(http_request_t *r) {
   for (const char **p = lite_olsr2_candidates; *p; ++p) {
     if (path_exists(*p)) { strncpy(lite_olsr2_path, *p, sizeof(lite_olsr2_path)-1); lite_olsr2_exists = 1; break; }
   }
-  APP_L("\"olsr2_on\":%s,\"olsrd_on\":%s,\"olsrd_exists\":%s,\"olsr2_exists\":%s", lite_olsr2_on?"true":"false", lite_olsrd_on?"true":"false", lite_olsrd_exists?"true":"false", lite_olsr2_exists?"true":"false");
+  APP_L("\"olsr2_on\":%s,\"olsrd_on\":%s,\"olsrd_exists\":%s,\"olsr2_exists\":%s,", lite_olsr2_on?"true":"false", lite_olsrd_on?"true":"false", lite_olsrd_exists?"true":"false", lite_olsr2_exists?"true":"false");
 
   /* OLSR2 data collection for lite endpoint */
   char *lite_olsr2_version_raw = NULL; size_t lite_olsr2_version_n = 0;
@@ -3989,15 +3989,19 @@ static int h_status_lite(http_request_t *r) {
   char *lite_olsr2_neighbors_raw = NULL; size_t lite_olsr2_neighbors_n = 0;
 
   if (lite_olsr2_on) {
+    CHECK_REQ_TIMEOUT_MS(1000);
     /* Get OLSR2 version */
     util_http_get_url_local("http://127.0.0.1:8000/telnet/olsrv2info%20json%20version", &lite_olsr2_version_raw, &lite_olsr2_version_n, 1);
 
+    CHECK_REQ_TIMEOUT_MS(1000);
     /* Get OLSR2 time */
     util_http_get_url_local("http://127.0.0.1:8000/telnet/systeminfo%20json%20time", &lite_olsr2_time_raw, &lite_olsr2_time_n, 1);
 
+    CHECK_REQ_TIMEOUT_MS(1000);
     /* Get OLSR2 originator */
     util_http_get_url_local("http://127.0.0.1:8000/telnet/olsrv2info%20json%20originator", &lite_olsr2_originator_raw, &lite_olsr2_originator_n, 1);
 
+    CHECK_REQ_TIMEOUT_MS(1000);
     /* Get OLSR2 neighbors */
     util_http_get_url_local("http://127.0.0.1:8000/telnet/nhdpinfo%20json%20link", &lite_olsr2_neighbors_raw, &lite_olsr2_neighbors_n, 1);
   }
