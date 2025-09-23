@@ -554,84 +554,95 @@ static char *filter_devices_array(const char *in, int lite, int drop_empty, size
   p++; /* skip '[' */
   const char *whitelist[] = { "ipv4","hwaddr","hostname","product","fwversion","firmware","essid","uptime" };
   size_t wcount = sizeof(whitelist)/sizeof(whitelist[0]);
-  size_t cap = strlen(in) + 32; char *out = malloc(cap); if (!out) return NULL; size_t len = 0; out[len++]='['; int first_obj_out = 1;
-  int depth = 0; const char *obj_start = NULL; const char *q = p;
+  size_t cap = strlen(in) + 32; char *out = malloc(cap); if (!out) return NULL; size_t len = 0; out[len++]= '['; int first_obj_out = 1;
+
+  /* Simple object extractor: find {...} top-level objects and rebuild them keeping only whitelist keys */
+  const char *q = p;
   while (*q) {
-    if (*q=='{') { if (depth==0) obj_start = q; depth++; q++; continue; }
-    if (*q=='}') {
-      depth--; if (depth==0 && obj_start) {
-        const char *obj_end = q+1;
-        /* Process object */
-        /* We'll rebuild object content */
-        if (!first_obj_out) { if (len+1>=cap) { cap*=2; char *nb=realloc(out,cap); if(!nb){ free(out); return NULL;} out=nb; } out[len++]=','; }
-        first_obj_out = 0;
-        if (len+1>=cap) { cap*=2; char *nb=realloc(out,cap); if(!nb){ free(out); return NULL;} out=nb; }
-        out[len++]='{';
-        int first_field = 1;
-        const char *kp = obj_start+1; /* inside object */
-        while (kp < obj_end) {
-          while (kp < obj_end && isspace((unsigned char)*kp)) {
-            kp++;
-          }
-          if (kp>=obj_end || *kp=='}') {
-            break;
-          }
-          if (*kp != '"') {
-            kp++;
-            continue;
-          }
-          const char *key_start = kp + 1;
-          const char *key_end = key_start; /* find end of key */
-          while (key_end < obj_end && *key_end != '"') {
-            if (*key_end == '\\' && key_end + 1 < obj_end) key_end += 2;
-            else key_end++;
-          }
-          /* find colon and value start */
-          const char *colon = key_end; while (colon < obj_end && *colon != ':') colon++;
-          if (colon >= obj_end) { kp = key_end + 1; continue; }
-          colon++; while (colon < obj_end && isspace((unsigned char)*colon)) colon++;
-          const char *val_start = colon; const char *val_end = val_start;
-          if (val_start < obj_end && *val_start == '"') {
-            val_end++; while (val_end < obj_end && *val_end != '"') { if (*val_end == '\\' && val_end + 1 < obj_end) val_end += 2; else val_end++; }
-            if (val_end < obj_end) val_end++; /* include closing quote */
-          } else {
-            while (val_end < obj_end && *val_end != ',' && *val_end != '}') val_end++;
-          }
-          /* capture raw key and value substrings */
-          size_t klen = (size_t)(key_end - key_start);
-          int keep = 1;
-          if (lite) {
-            keep = 0;
-            for (size_t wi=0; wi<wcount; wi++) if (klen == strlen(whitelist[wi]) && strncmp(key_start, whitelist[wi], klen)==0) { keep=1; break; }
-          }
-          if (keep && drop_empty && val_end > val_start && *val_start=='"' && (val_end - val_start)==2) {
-            /* value is "" -> drop */
-            keep = 0;
-          }
-          if (keep) {
-            /* append comma if needed */
-            if (!first_field) { if (len+1>=cap) { cap*=2; char *nb=realloc(out,cap); if(!nb){ free(out); return NULL;} out=nb; } out[len++]=','; }
-            first_field = 0;
-            /* append key */
-            size_t need = 2 + klen + 1 + (size_t)(val_end - val_start); /* quotes + key + colon + value */
-            if (len+need >= cap) { while (len+need >= cap) cap*=2; char *nb=realloc(out,cap); if(!nb){ free(out); return NULL;} out=nb; }
-            out[len++]='"'; memcpy(out+len, key_start, klen); len+=klen; out[len++]='"'; out[len++]=':'; memcpy(out+len, val_start, (size_t)(val_end - val_start)); len += (size_t)(val_end - val_start);
-          }
-          /* advance past optional comma */
-          while (kp < obj_end && isspace((unsigned char)*kp)) kp++;
-          if (kp < obj_end && *kp==',') kp++;
-        }
-        if (len+1>=cap) { cap*=2; char *nb=realloc(out,cap); if(!nb){ free(out); return NULL;} out=nb; }
-        out[len++]='}';
-        obj_start=NULL;
-      }
+    /* find next object start */
+    while (*q && *q != '{') q++;
+    if (!*q) break;
+    const char *obj_start = q; int depth = 0;
+    while (*q) {
+      if (*q == '{') depth++;
+      else if (*q == '}') { depth--; if (depth == 0) { q++; break; } }
       q++;
-      continue;
     }
-    q++;
+    const char *obj_end = q; if (!obj_end) break;
+    /* process object [obj_start, obj_end) */
+    /* collect fields */
+    const char *kp = obj_start + 1;
+    char *objbuf = NULL; size_t objcap = 256; size_t objlen = 0; objbuf = malloc(objcap); if (!objbuf) { free(out); return NULL; }
+    objbuf[objlen++] = '{'; int first_field = 1;
+    while (kp < obj_end) {
+      while (kp < obj_end && isspace((unsigned char)*kp)) kp++;
+      if (kp >= obj_end || *kp == '}') break;
+      if (*kp != '"') { kp++; continue; }
+      const char *key_start = kp + 1; const char *key_end = key_start;
+      while (key_end < obj_end && *key_end != '"') { if (*key_end == '\\' && key_end + 1 < obj_end) key_end += 2; else key_end++; }
+      if (key_end >= obj_end) break;
+      size_t klen = (size_t)(key_end - key_start);
+      char keybuf[128]; size_t copy = klen < sizeof(keybuf)-1 ? klen : sizeof(keybuf)-1; memcpy(keybuf, key_start, copy); keybuf[copy]=0;
+      /* find colon */
+      const char *colon = key_end; while (colon < obj_end && *colon != ':') colon++;
+      if (colon >= obj_end) break; colon++; while (colon < obj_end && isspace((unsigned char)*colon)) colon++;
+      const char *val_start = colon; const char *val_end = val_start;
+      if (val_start < obj_end && *val_start == '"') {
+        val_end++; while (val_end < obj_end && *val_end != '"') { if (*val_end == '\\' && val_end + 1 < obj_end) val_end += 2; else val_end++; }
+        if (val_end < obj_end) val_end++; else val_end = obj_end;
+      } else if (val_start < obj_end && (*val_start == '{' || *val_start == '[')) {
+        /* find matching bracket */
+        char open = *val_start; char close = (open == '{') ? '}' : ']'; int d = 0; const char *t = val_start;
+        while (t < obj_end) { if (*t == open) d++; else if (*t == close) { d--; if (d == 0) { t++; break; } } t++; }
+        val_end = t;
+      } else {
+        while (val_end < obj_end && *val_end != ',' && *val_end != '}') val_end++;
+      }
+      /* decide keep */
+      int keep = 0;
+      for (size_t wi = 0; wi < wcount; ++wi) { if (strncmp(keybuf, whitelist[wi], strlen(whitelist[wi])) == 0 && strlen(whitelist[wi]) == strlen(keybuf)) { keep = 1; break; } }
+      if (keep && drop_empty) {
+        /* if value is empty string "" skip */
+        if (val_start < val_end && val_start[0] == '"' && val_end - val_start == 2) keep = 0;
+      }
+      if (keep) {
+        /* append comma if needed */
+        if (!first_field) {
+          if (objlen + 1 >= objcap) { objcap *= 2; char *nb = realloc(objbuf, objcap); if (!nb) { free(objbuf); free(out); return NULL; } objbuf = nb; }
+          objbuf[objlen++] = ',';
+        }
+        first_field = 0;
+        /* append key and ':' and value */
+        size_t need = (size_t)(key_end - (key_start - 1)) + (size_t)(val_end - val_start) + 4;
+        if (objlen + need >= objcap) { while (objlen + need >= objcap) objcap *= 2; char *nb = realloc(objbuf, objcap); if (!nb) { free(objbuf); free(out); return NULL; } objbuf = nb; }
+        /* key (with quotes) */
+        objlen += snprintf(objbuf + objlen, objcap - objlen, "\"%s\":", keybuf);
+        /* value: copy raw substring */
+        size_t vlen = (size_t)(val_end - val_start);
+        memcpy(objbuf + objlen, val_start, vlen); objlen += vlen; objbuf[objlen] = '\0';
+      }
+      /* advance kp to after value or comma */
+      kp = val_end;
+      if (kp < obj_end && *kp == ',') kp++;
+    }
+    /* close object */
+    if (objlen + 2 >= objcap) { char *nb = realloc(objbuf, objlen + 2); if (!nb) { free(objbuf); free(out); return NULL; } objbuf = nb; objcap = objlen + 2; }
+    objbuf[objlen++] = '}'; objbuf[objlen] = '\0';
+    /* append to out if any fields present (object length > 2) */
+    if (objlen > 2) {
+      if (!first_obj_out) {
+        if (len + 1 >= cap) { cap *= 2; char *nb = realloc(out, cap); if (!nb) { free(objbuf); free(out); return NULL; } out = nb; }
+        out[len++] = ',';
+      }
+      first_obj_out = 0;
+      if (len + objlen >= cap) { while (len + objlen >= cap) cap *= 2; char *nb = realloc(out, cap); if (!nb) { free(objbuf); free(out); return NULL; } out = nb; }
+      memcpy(out + len, objbuf, objlen); len += objlen; out[len] = '\0';
+    }
+    free(objbuf);
   }
-  if (len+2 >= cap) { cap+=2; char *nb=realloc(out,cap); if(!nb){ free(out); return NULL;} out=nb; }
-  out[len++]=']'; out[len]='\0'; if (out_len) *out_len = len; return out;
+  /* close array */
+  if (len + 2 >= cap) { char *nb = realloc(out, len + 2); if (!nb) { free(out); return NULL; } out = nb; cap = len + 2; }
+  out[len++] = ']'; out[len] = '\0'; if (out_len) *out_len = len; return out;
 }
 /* ARP JSON cache */
 static char *g_arp_cache = NULL;          /* malloc'ed JSON array string */
@@ -3118,6 +3129,20 @@ static int is_html_error(const char *buf, size_t n) {
   return 0;
 }
 
+/* Lightweight check whether a buffer looks like JSON (object or array).
+ * We only need to detect the common valid JSON starts so that callers can
+ * safely decide whether to embed raw content or escape it as a string.
+ */
+static int is_probably_json(const char *buf, size_t n) {
+  if (!buf || n == 0) return 0;
+  size_t i = 0; while (i < n && (buf[i] == ' ' || buf[i] == '\n' || buf[i] == '\r' || buf[i] == '\t')) i++;
+  if (i >= n) return 0;
+  if (buf[i] == '{' || buf[i] == '[' || buf[i] == '"') return 1;
+  /* also accept a number or minus sign (bare JSON value), though rare for our use */
+  if ((buf[i] >= '0' && buf[i] <= '9') || buf[i] == '-') return 1;
+  return 0;
+}
+
 /* Fetch an OLSR2 telnet command via the local telnet HTTP bridge.
  * This builds the URL, fetches it, and treats HTML/HTTP error pages as
  * failures. For some commands (notably nhdpinfo), try a small set of
@@ -3609,7 +3634,14 @@ links_done_plain_fallback:
   APPEND(",\"olsrd4watchdog\":{\"state\":\"%s\"}", olsrd_on?"on":"off");
 
   /* include raw olsr routes JSON when available; avoid including raw neighbors/topology to slim payload */
-  if (olsr_routes_raw) { APPEND(",\"olsr_routes_raw\":%s", olsr_routes_raw); }
+  if (olsr_routes_raw) {
+    /* if the collected block already looks like JSON, embed verbatim; otherwise emit as escaped string */
+    if (is_probably_json(olsr_routes_raw, strlen(olsr_routes_raw))) {
+      APPEND(",\"olsr_routes_raw\":%s", olsr_routes_raw);
+    } else {
+      APPEND(",\"olsr_routes_raw\":"); json_append_escaped(&buf, &len, &cap, olsr_routes_raw); APPEND("");
+    }
+  }
 
   if (olsr_links_raw) { free(olsr_links_raw); olsr_links_raw = NULL; }
 
@@ -3779,22 +3811,38 @@ links_done_plain_fallback:
   /* OLSR2 data */
   if (olsr2_on) {
     if (olsr2_version_raw && olsr2_version_n > 0) {
-      APPEND(",\"olsr2_version\":%s", olsr2_version_raw);
+      if (is_probably_json(olsr2_version_raw, olsr2_version_n)) {
+        APPEND(",\"olsr2_version\":%s", olsr2_version_raw);
+      } else {
+        APPEND(",\"olsr2_version\":"); json_append_escaped(&buf, &len, &cap, olsr2_version_raw); APPEND("");
+      }
     } else {
       APPEND(",\"olsr2_version\":{}");
     }
     if (olsr2_time_raw && olsr2_time_n > 0) {
-      APPEND(",\"olsr2_time\":%s", olsr2_time_raw);
+      if (is_probably_json(olsr2_time_raw, olsr2_time_n)) {
+        APPEND(",\"olsr2_time\":%s", olsr2_time_raw);
+      } else {
+        APPEND(",\"olsr2_time\":"); json_append_escaped(&buf, &len, &cap, olsr2_time_raw); APPEND("");
+      }
     } else {
       APPEND(",\"olsr2_time\":{}");
     }
     if (olsr2_originator_raw && olsr2_originator_n > 0) {
-      APPEND(",\"olsr2_originator\":%s", olsr2_originator_raw);
+      if (is_probably_json(olsr2_originator_raw, olsr2_originator_n)) {
+        APPEND(",\"olsr2_originator\":%s", olsr2_originator_raw);
+      } else {
+        APPEND(",\"olsr2_originator\":"); json_append_escaped(&buf, &len, &cap, olsr2_originator_raw); APPEND("");
+      }
     } else {
       APPEND(",\"olsr2_originator\":{}");
     }
     if (olsr2_neighbors_raw && olsr2_neighbors_n > 0) {
-      APPEND(",\"olsr2_neighbors\":%s", olsr2_neighbors_raw);
+      if (is_probably_json(olsr2_neighbors_raw, olsr2_neighbors_n)) {
+        APPEND(",\"olsr2_neighbors\":%s", olsr2_neighbors_raw);
+      } else {
+        APPEND(",\"olsr2_neighbors\":"); json_append_escaped(&buf, &len, &cap, olsr2_neighbors_raw); APPEND("");
+      }
     } else {
       APPEND(",\"olsr2_neighbors\":{}");
     }
