@@ -3414,25 +3414,6 @@ static int h_status(http_request_t *r) {
       abuf_free(&nab);
     }
   }
-  /* If olsrd2 is running and the default neighbor endpoint returned nothing,
-   * try the telnet bridge endpoints that some olsrd2 builds expose (used by
-   * bmk-webstatus.py). Prefer JSON output when available.
-   */
-  if (olsr2_on && (!olsr_neighbors_raw || olnn == 0)) {
-    char *tmp = NULL; size_t tlen = 0;
-  /* try telnet bridge endpoints exposed by some olsrd2 builds (prefer JSON) */
-  if (g_log_buf_lines > 0) plugin_log_trace("telnet: olsr2 present, attempting telnet nhdpinfo endpoints");
-    if (util_http_get_url_local("http://127.0.0.1:8000/telnet/nhdpinfo%20json%20link", &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
-  if (g_log_buf_lines > 0) plugin_log_trace("telnet: fetched nhdpinfo link (%zu bytes)", tlen);
-      olsr_neighbors_raw = tmp; olnn = tlen;
-    } else { if (tmp) { fprintf(stderr, "[status-plugin] telnet nhdpinfo link failed or empty\n"); free(tmp); tmp = NULL; tlen = 0; } }
-    if ((!olsr_neighbors_raw || olnn == 0)) {
-      if (util_http_get_url_local("http://127.0.0.1:8000/telnet/nhdpinfo%20json%20neighbor", &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
-  if (g_log_buf_lines > 0) plugin_log_trace("telnet: fetched nhdpinfo neighbor (%zu bytes)", tlen);
-        olsr_neighbors_raw = tmp; olnn = tlen;
-      } else { if (tmp) { fprintf(stderr, "[status-plugin] telnet nhdpinfo neighbor failed or empty\n"); free(tmp); tmp = NULL; tlen = 0; } }
-    }
-  }
   /* Prefer in-memory collectors for routes/topology, fallback to selected external endpoint only if needed */
   char *olsr_routes_raw = NULL; char *olsr_topology_raw = NULL;
   {
