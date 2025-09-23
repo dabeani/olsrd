@@ -3071,7 +3071,11 @@ static void build_olsr2_url(char *buf, size_t bufsize, const char *command) {
    * simple (e.g. "olsrv2info json originator"), but keep it small and
    * defensive.
    */
-  char enc[512];
+  /* enc must be smaller than the final URL buffer to ensure snprintf cannot
+   * produce a truncated-format warning. Keep it conservative (220 bytes)
+   * because the URL prefix consumes ~30 bytes.
+   */
+  char enc[220];
   const char *s = command;
   char *d = enc;
   size_t rem = sizeof(enc) - 1;
