@@ -4663,28 +4663,47 @@ static int h_status_stats(http_request_t *r) {
   // Approximate olsr routes/nodes from cached metrics
   unsigned long olsr_routes = unique_routes; unsigned long olsr_nodes = unique_nodes;
 
-  /* Try to compute live counts by probing local OLSR endpoints if unique metrics are zero.
+  /* Compute live counts from in-memory core implementation if unique metrics are zero.
    * This provides immediate feedback in the UI even when normalize step hasn't been run
    * by a full /status request yet.
    */
   if (olsr_routes == 0 && olsr_nodes == 0) {
-    char *links_raw = NULL; size_t lr = 0;
-    char *routes_raw = NULL; size_t rr = 0;
-    char *topology_raw = NULL; size_t tr = 0;
-    const char *link_eps[] = { "http://127.0.0.1:9090/links", "http://127.0.0.1:2006/links", "http://127.0.0.1:8123/links", NULL };
-    const char *routes_eps[] = { "http://127.0.0.1:9090/routes", "http://127.0.0.1:2006/routes", "http://127.0.0.1:8123/routes", NULL };
-    const char *topo_eps[] = { "http://127.0.0.1:9090/topology", "http://127.0.0.1:2006/topology", "http://127.0.0.1:8123/topology", NULL };
-    for (const char **ep = link_eps; *ep && !links_raw; ++ep) {
-      if (util_http_get_url_local(*ep, &links_raw, &lr, 1) == 0 && links_raw && lr > 0) break;
-      if (links_raw) { free(links_raw); links_raw = NULL; lr = 0; }
+    char *links_raw = NULL;
+    char *routes_raw = NULL;
+    char *topology_raw = NULL;
+    /* Collect from in-memory core implementation */
+    {
+      struct autobuf ab;
+      if (abuf_init(&ab, 4096) == 0) {
+        status_collect_links(&ab);
+        if (ab.len > 0) {
+          links_raw = malloc(ab.len + 1);
+          if (links_raw) { memcpy(links_raw, ab.buf, ab.len); links_raw[ab.len] = '\0'; }
+        }
+        abuf_free(&ab);
+      }
     }
-    for (const char **ep = routes_eps; *ep && !routes_raw; ++ep) {
-      if (util_http_get_url_local(*ep, &routes_raw, &rr, 1) == 0 && routes_raw && rr > 0) break;
-      if (routes_raw) { free(routes_raw); routes_raw = NULL; rr = 0; }
+    {
+      struct autobuf ab;
+      if (abuf_init(&ab, 4096) == 0) {
+        status_collect_routes(&ab);
+        if (ab.len > 0) {
+          routes_raw = malloc(ab.len + 1);
+          if (routes_raw) { memcpy(routes_raw, ab.buf, ab.len); routes_raw[ab.len] = '\0'; }
+        }
+        abuf_free(&ab);
+      }
     }
-    for (const char **ep = topo_eps; *ep && !topology_raw; ++ep) {
-      if (util_http_get_url_local(*ep, &topology_raw, &tr, 1) == 0 && topology_raw && tr > 0) break;
-      if (topology_raw) { free(topology_raw); topology_raw = NULL; tr = 0; }
+    {
+      struct autobuf ab;
+      if (abuf_init(&ab, 4096) == 0) {
+        status_collect_topology(&ab);
+        if (ab.len > 0) {
+          topology_raw = malloc(ab.len + 1);
+          if (topology_raw) { memcpy(topology_raw, ab.buf, ab.len); topology_raw[ab.len] = '\0'; }
+        }
+        abuf_free(&ab);
+      }
     }
     if (links_raw || routes_raw || topology_raw) {
       /* combine similarly to full status path */
