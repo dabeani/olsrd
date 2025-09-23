@@ -4241,40 +4241,67 @@ static int h_status_lite(http_request_t *r) {
     unsigned long olsr_routes = unique_routes;
     unsigned long olsr_nodes = unique_nodes;
     if (olsr_routes == 0 && olsr_nodes == 0) {
-      /* Build lightweight counts using in-memory collectors only (no HTTP probes) */
-      struct autobuf rab;
-      struct autobuf tab;
+      /* Build lightweight counts using in-memory collectors only (no HTTP probes).
+       * We need links+routes+topology to compute per-neighbor node/route counts.
+       */
+      struct autobuf lab, rab, tab;
+      char *links_raw = NULL, *routes_raw = NULL, *topology_raw = NULL;
+      size_t l1 = 0, l2 = 0, l3 = 0;
+      int have_any = 0;
+      if (abuf_init(&lab, 4096) == 0) {
+        status_collect_links(&lab);
+        if (lab.len > 0) { links_raw = malloc(lab.len + 1); if (links_raw) { memcpy(links_raw, lab.buf, lab.len); links_raw[lab.len] = '\0'; l1 = lab.len; have_any = 1; } }
+        abuf_free(&lab);
+      }
       if (abuf_init(&rab, 4096) == 0) {
-        if (status_collect_routes(&rab), rab.len > 0) {
-          char *combined = malloc(rab.len + 1);
-          if (combined) { memcpy(combined, rab.buf, rab.len); combined[rab.len] = '\0';
-            char *norm = NULL; size_t nn = 0;
-            if ((normalize_olsrd_links(combined, &norm, &nn) == 0 && norm && nn > 0) ||
-                (normalize_olsrd_links_plain(combined, &norm, &nn) == 0 && norm && nn > 0)) {
-              unsigned long sum_routes = 0, sum_nodes = 0;
-              const char *p = norm;
-              while ((p = strstr(p, "\"routes\":")) != NULL) {
-                p += 9; while (*p && (*p == ' ' || *p == '"' || *p == '\\' || *p == ':' )) p++; sum_routes += strtoul(p, NULL, 10);
-              }
-              p = norm;
-              while ((p = strstr(p, "\"nodes\":")) != NULL) {
-                p += 8; while (*p && (*p == ' ' || *p == '"' || *p == '\\' || *p == ':' )) p++; sum_nodes += strtoul(p, NULL, 10);
-              }
-              if (sum_routes > 0 || sum_nodes > 0) { olsr_routes = sum_routes; olsr_nodes = sum_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes); }
-              else {
-                unsigned long h_nodes = 0, h_routes = 0;
-                heuristic_count_ips_in_raw(combined, &h_nodes, &h_routes);
-                if (h_nodes > 0 || h_routes > 0) { olsr_routes = h_routes; olsr_nodes = h_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes); if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: heuristic counts applied nodes=%lu routes=%lu\n", h_nodes, h_routes); }
-              }
-            }
-            if (norm) free(norm);
-            free(combined);
-          }
-        }
+        status_collect_routes(&rab);
+        if (rab.len > 0) { routes_raw = malloc(rab.len + 1); if (routes_raw) { memcpy(routes_raw, rab.buf, rab.len); routes_raw[rab.len] = '\0'; l2 = rab.len; have_any = 1; } }
         abuf_free(&rab);
       }
-      /* topology collector may provide additional data; attempt and ignore if empty */
-      if (abuf_init(&tab, 4096) == 0) { status_collect_topology(&tab); abuf_free(&tab); }
+      if (abuf_init(&tab, 4096) == 0) {
+        status_collect_topology(&tab);
+        if (tab.len > 0) { topology_raw = malloc(tab.len + 1); if (topology_raw) { memcpy(topology_raw, tab.buf, tab.len); topology_raw[tab.len] = '\0'; l3 = tab.len; have_any = 1; } }
+        abuf_free(&tab);
+      }
+      if (have_any) {
+        size_t clen = l1 + l2 + l3 + 8;
+        char *combined = malloc(clen);
+        if (combined) {
+          size_t off = 0;
+          if (links_raw && l1) { memcpy(combined + off, links_raw, l1); off += l1; }
+          if (routes_raw && l2) { combined[off++] = '\n'; memcpy(combined + off, routes_raw, l2); off += l2; }
+          if (topology_raw && l3) { combined[off++] = '\n'; memcpy(combined + off, topology_raw, l3); off += l3; }
+          combined[off] = '\0';
+          char *norm = NULL; size_t nn = 0;
+          if ((normalize_olsrd_links(combined, &norm, &nn) == 0 && norm && nn > 0) ||
+              (normalize_olsrd_links_plain(combined, &norm, &nn) == 0 && norm && nn > 0)) {
+            unsigned long sum_routes = 0, sum_nodes = 0;
+            const char *p2 = norm;
+            while ((p2 = strstr(p2, "\"routes\":")) != NULL) {
+              p2 += 9; while (*p2 && (*p2 == ' ' || *p2 == '"' || *p2 == '\\' || *p2 == ':' )) p2++; sum_routes += strtoul(p2, NULL, 10);
+            }
+            p2 = norm;
+            while ((p2 = strstr(p2, "\"nodes\":")) != NULL) {
+              p2 += 8; while (*p2 && (*p2 == ' ' || *p2 == '"' || *p2 == '\\' || *p2 == ':' )) p2++; sum_nodes += strtoul(p2, NULL, 10);
+            }
+            if (sum_routes > 0 || sum_nodes > 0) { olsr_routes = sum_routes; olsr_nodes = sum_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes); }
+            else {
+              unsigned long h_nodes = 0, h_routes = 0;
+              heuristic_count_ips_in_raw(combined, &h_nodes, &h_routes);
+              if (h_nodes > 0 || h_routes > 0) { olsr_routes = h_routes; olsr_nodes = h_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes); if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: heuristic counts applied nodes=%lu routes=%lu\n", h_nodes, h_routes); }
+            }
+          } else {
+            /* Normalization failed, attempt heuristic on the combined snapshot */
+            unsigned long h_nodes = 0, h_routes = 0; heuristic_count_ips_in_raw(combined, &h_nodes, &h_routes);
+            if (h_nodes > 0 || h_routes > 0) { olsr_routes = h_routes; olsr_nodes = h_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes); if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: heuristic counts (no norm) nodes=%lu routes=%lu\n", h_nodes, h_routes); }
+          }
+          if (norm) free(norm);
+          free(combined);
+        }
+      }
+      if (links_raw) free(links_raw);
+      if (routes_raw) free(routes_raw);
+      if (topology_raw) free(topology_raw);
     }
     /* Attempt to include memory stats (Linux /proc/meminfo) for the lightweight payload */
     unsigned long mem_total_kb = 0, mem_free_kb = 0, mem_available_kb = 0;
