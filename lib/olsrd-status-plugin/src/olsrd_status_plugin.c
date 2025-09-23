@@ -2904,7 +2904,7 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
   char olsrd_path[256] = "";
   char olsr2_path[256] = "";
   const char *olsrd_candidates[] = { "/usr/sbin/olsrd", "/usr/bin/olsrd", "/sbin/olsrd", NULL };
-  const char *olsr2_candidates[] = { "/usr/sbin/olsrd2", "/usr/bin/olsrd2", "/sbin/olsrd2", "/config/olsrd2/olsrd2", NULL };
+  const char *olsr2_candidates[] = { "/usr/sbin/olsrd2", "/usr/bin/olsrd2", "/sbin/olsrd2", "/config/olsrd2/olsrd2", "/usr/sbin/olsrd2_static", "/usr/bin/olsrd2_static", "/sbin/olsrd2_static", "/config/olsrd2/olsrd2_static", NULL };
   for (const char **p = olsrd_candidates; *p; ++p) {
     if (path_exists(*p)) { strncpy(olsrd_path, *p, sizeof(olsrd_path)-1); olsrd_exists = 1; break; }
   }
