@@ -3201,7 +3201,10 @@ static void detect_olsr_processes(int *out_olsrd, int *out_olsr2) {
         free(line);
       }
     }
-    if (!line_end) break; p = line_end + 1;
+    if (!line_end) {
+      break;
+    }
+    p = line_end + 1;
     if ((out_olsrd && *out_olsrd) && (out_olsr2 && *out_olsr2)) break;
   }
 
