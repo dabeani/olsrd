@@ -3991,16 +3991,7 @@ static int h_status_lite(http_request_t *r) {
   char def_ip[64]="", def_dev[64]="", def_hostname[256]="";
   /* prefer IPv4 default by default */
   get_default_ipv4_route(def_ip, sizeof(def_ip), def_dev, sizeof(def_dev));
-  /* If olsr2 is running, attempt to also detect an IPv6 default and prefer it */
-  if (lite_olsr2_on_local) {
-    char def6_ip[128] = ""; char def6_dev[64] = "";
-    get_default_ipv6_route(def6_ip, sizeof(def6_ip), def6_dev, sizeof(def6_dev));
-    /* prefer IPv6 default when olsr2 is present */
-    if (def6_ip[0]) {
-      strncpy(def_ip, def6_ip, sizeof(def_ip)-1); def_ip[sizeof(def_ip)-1]=0;
-      if (def6_dev[0]) { strncpy(def_dev, def6_dev, sizeof(def_dev)-1); def_dev[sizeof(def_dev)-1]=0; }
-    }
-  }
+  /* Do not override with IPv6 here: this block renders the IPv4 Default-Route in the Status tab. */
 
   if (def_ip[0]) {
     struct in_addr ina;
