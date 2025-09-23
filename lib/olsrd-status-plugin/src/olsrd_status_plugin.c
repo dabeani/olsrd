@@ -3981,6 +3981,57 @@ static int h_status_lite(http_request_t *r) {
     if (path_exists(*p)) { strncpy(lite_olsr2_path, *p, sizeof(lite_olsr2_path)-1); lite_olsr2_exists = 1; break; }
   }
   APP_L("\"olsr2_on\":%s,\"olsrd_on\":%s,\"olsrd_exists\":%s,\"olsr2_exists\":%s", lite_olsr2_on?"true":"false", lite_olsrd_on?"true":"false", lite_olsrd_exists?"true":"false", lite_olsr2_exists?"true":"false");
+
+  /* OLSR2 data collection for lite endpoint */
+  char *lite_olsr2_version_raw = NULL; size_t lite_olsr2_version_n = 0;
+  char *lite_olsr2_time_raw = NULL; size_t lite_olsr2_time_n = 0;
+  char *lite_olsr2_originator_raw = NULL; size_t lite_olsr2_originator_n = 0;
+  char *lite_olsr2_neighbors_raw = NULL; size_t lite_olsr2_neighbors_n = 0;
+
+  if (lite_olsr2_on) {
+    /* Get OLSR2 version */
+    util_http_get_url_local("http://127.0.0.1:8000/telnet/olsrv2info%20json%20version", &lite_olsr2_version_raw, &lite_olsr2_version_n, 1);
+
+    /* Get OLSR2 time */
+    util_http_get_url_local("http://127.0.0.1:8000/telnet/systeminfo%20json%20time", &lite_olsr2_time_raw, &lite_olsr2_time_n, 1);
+
+    /* Get OLSR2 originator */
+    util_http_get_url_local("http://127.0.0.1:8000/telnet/olsrv2info%20json%20originator", &lite_olsr2_originator_raw, &lite_olsr2_originator_n, 1);
+
+    /* Get OLSR2 neighbors */
+    util_http_get_url_local("http://127.0.0.1:8000/telnet/nhdpinfo%20json%20link", &lite_olsr2_neighbors_raw, &lite_olsr2_neighbors_n, 1);
+  }
+
+  if (lite_olsr2_version_raw && lite_olsr2_version_n > 0) {
+    APP_L(",\"olsr2_version\":%s", lite_olsr2_version_raw);
+  } else {
+    APP_L(",\"olsr2_version\":{}");
+  }
+
+  if (lite_olsr2_time_raw && lite_olsr2_time_n > 0) {
+    APP_L(",\"olsr2_time\":%s", lite_olsr2_time_raw);
+  } else {
+    APP_L(",\"olsr2_time\":{}");
+  }
+
+  if (lite_olsr2_originator_raw && lite_olsr2_originator_n > 0) {
+    APP_L(",\"olsr2_originator\":%s", lite_olsr2_originator_raw);
+  } else {
+    APP_L(",\"olsr2_originator\":{}");
+  }
+
+  if (lite_olsr2_neighbors_raw && lite_olsr2_neighbors_n > 0) {
+    APP_L(",\"olsr2_neighbors\":%s", lite_olsr2_neighbors_raw);
+  } else {
+    APP_L(",\"olsr2_neighbors\":{}");
+  }
+
+  /* Free OLSR2 data */
+  if (lite_olsr2_version_raw) free(lite_olsr2_version_raw);
+  if (lite_olsr2_time_raw) free(lite_olsr2_time_raw);
+  if (lite_olsr2_originator_raw) free(lite_olsr2_originator_raw);
+  if (lite_olsr2_neighbors_raw) free(lite_olsr2_neighbors_raw);
+
   /* Also include lightweight OLSR route/node counts for the UI statistics tab */
   {
     unsigned long dropped=0, retries=0, successes=0;
