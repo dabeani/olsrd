@@ -251,6 +251,11 @@ int render_connections_json(char **buf_out, size_t *len_out){
           if (ip_count == 0) {
             char ipbufs[64][64]; int got = collect_ifaddrs_ipv4(ports[p], ipbufs, 64);
             for (int ii=0; ii<got && ip_count < 64; ii++) { snprintf(ips[ip_count], sizeof(ips[0]), "%.*s", (int)(sizeof(ips[0]) - 1), ipbufs[ii]); ip_count++; }
+            /* For bridge ports, also check the bridge interface for IPs */
+            if (ip_count == 0) {
+              got = collect_ifaddrs_ipv4(bridges[i], ipbufs, 64);
+              for (int ii=0; ii<got && ip_count < 64; ii++) { snprintf(ips[ip_count], sizeof(ips[0]), "%.*s", (int)(sizeof(ips[0]) - 1), ipbufs[ii]); ip_count++; }
+            }
           }
           if (!first_port) JAPPEND(",");
           JAPPEND("{\"port\":\"%s\",\"bridge\":\"%s\",\"macs\":[", ports[p], bridges[i]);
