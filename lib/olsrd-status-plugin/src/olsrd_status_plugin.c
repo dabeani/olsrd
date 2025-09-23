@@ -3109,6 +3109,35 @@ static int is_html_error(const char *buf, size_t n) {
   return 0;
 }
 
+/* Fetch an OLSR2 telnet command via the local telnet HTTP bridge.
+ * This builds the URL, fetches it, and treats HTML/HTTP error pages as
+ * failures. For some commands (notably nhdpinfo), try a small set of
+ * fallbacks if the primary command returns nothing or HTML.
+ * Returns 0 on success (out/out_n filled), non-zero on failure.
+ */
+static int util_http_get_olsr2_local(const char *command, char **out, size_t *out_n) {
+  char url[256];
+  char *tmp = NULL; size_t tlen = 0; int rc = -1;
+
+  build_olsr2_url(url, sizeof(url), command);
+  if (util_http_get_url_local(url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0 && !is_html_error(tmp, tlen)) {
+    *out = tmp; *out_n = tlen; return 0;
+  }
+  if (tmp) { free(tmp); tmp = NULL; tlen = 0; }
+
+  /* Simple fallback: if asking for nhdpinfo link, try nhdpinfo neighbor */
+  if (strstr(command, "nhdpinfo json link") != NULL) {
+    build_olsr2_url(url, sizeof(url), "nhdpinfo json neighbor");
+    if (util_http_get_url_local(url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0 && !is_html_error(tmp, tlen)) {
+      *out = tmp; *out_n = tlen; return 0;
+    }
+    if (tmp) { free(tmp); tmp = NULL; tlen = 0; }
+  }
+
+  /* nothing worked */
+  return rc;
+}
+
 /* Robust detection of olsrd / olsrd2 processes for diverse environments (EdgeRouter, containers, musl) */
 static void detect_olsr_processes(int *out_olsrd, int *out_olsr2) {
   if(out_olsrd) {
@@ -3201,26 +3230,18 @@ static int h_status(http_request_t *r) {
   detect_olsr_processes(&olsrd_on, &olsr2_on);
 
   if (olsr2_on) {
-    char olsr2_url[256];
+  /* olsr2_url not needed here; util_http_get_olsr2_local builds URLs */
   /* Get OLSR2 version */
-  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "systeminfo json version");
-  util_http_get_url_local(olsr2_url, &olsr2_version_raw, &olsr2_version_n, 1);
-  if (is_html_error(olsr2_version_raw, olsr2_version_n)) { free(olsr2_version_raw); olsr2_version_raw = NULL; olsr2_version_n = 0; }
+  if (util_http_get_olsr2_local("systeminfo json version", &olsr2_version_raw, &olsr2_version_n) != 0) { olsr2_version_raw = NULL; olsr2_version_n = 0; }
 
     /* Get OLSR2 time */
-  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "systeminfo json time");
-  util_http_get_url_local(olsr2_url, &olsr2_time_raw, &olsr2_time_n, 1);
-  if (is_html_error(olsr2_time_raw, olsr2_time_n)) { free(olsr2_time_raw); olsr2_time_raw = NULL; olsr2_time_n = 0; }
+  if (util_http_get_olsr2_local("systeminfo json time", &olsr2_time_raw, &olsr2_time_n) != 0) { olsr2_time_raw = NULL; olsr2_time_n = 0; }
 
     /* Get OLSR2 originator */
-  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json originator");
-  util_http_get_url_local(olsr2_url, &olsr2_originator_raw, &olsr2_originator_n, 1);
-  if (is_html_error(olsr2_originator_raw, olsr2_originator_n)) { free(olsr2_originator_raw); olsr2_originator_raw = NULL; olsr2_originator_n = 0; }
+  if (util_http_get_olsr2_local("olsrv2info json originator", &olsr2_originator_raw, &olsr2_originator_n) != 0) { olsr2_originator_raw = NULL; olsr2_originator_n = 0; }
 
     /* Get OLSR2 neighbors */
-  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo json link");
-  util_http_get_url_local(olsr2_url, &olsr2_neighbors_raw, &olsr2_neighbors_n, 1);
-  if (is_html_error(olsr2_neighbors_raw, olsr2_neighbors_n)) { free(olsr2_neighbors_raw); olsr2_neighbors_raw = NULL; olsr2_neighbors_n = 0; }
+  if (util_http_get_olsr2_local("nhdpinfo json link", &olsr2_neighbors_raw, &olsr2_neighbors_n) != 0) { olsr2_neighbors_raw = NULL; olsr2_neighbors_n = 0; }
 
     /* Get IPv6 routing table */
     util_exec("/sbin/ip -6 r l proto 100 | grep -v 'default' | awk '{print $3,$1,$5}'", &olsr2_routing6_raw, &olsr2_routing6_n);
@@ -4049,26 +4070,18 @@ static int h_status_lite(http_request_t *r) {
   char *lite_olsr2_neighbors_raw = NULL; size_t lite_olsr2_neighbors_n = 0;
 
   if (lite_olsr2_on) {
-    char olsr2_url[256];
+  /* olsr2_url not needed here; util_http_get_olsr2_local builds URLs */
   /* Get OLSR2 version */
-  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "systeminfo json version");
-  util_http_get_url_local(olsr2_url, &lite_olsr2_version_raw, &lite_olsr2_version_n, 1);
-  if (is_html_error(lite_olsr2_version_raw, lite_olsr2_version_n)) { free(lite_olsr2_version_raw); lite_olsr2_version_raw = NULL; lite_olsr2_version_n = 0; }
+  if (util_http_get_olsr2_local("systeminfo json version", &lite_olsr2_version_raw, &lite_olsr2_version_n) != 0) { lite_olsr2_version_raw = NULL; lite_olsr2_version_n = 0; }
 
     /* Get OLSR2 time */
-  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "systeminfo json time");
-  util_http_get_url_local(olsr2_url, &lite_olsr2_time_raw, &lite_olsr2_time_n, 1);
-  if (is_html_error(lite_olsr2_time_raw, lite_olsr2_time_n)) { free(lite_olsr2_time_raw); lite_olsr2_time_raw = NULL; lite_olsr2_time_n = 0; }
+  if (util_http_get_olsr2_local("systeminfo json time", &lite_olsr2_time_raw, &lite_olsr2_time_n) != 0) { lite_olsr2_time_raw = NULL; lite_olsr2_time_n = 0; }
 
     /* Get OLSR2 originator */
-  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json originator");
-  util_http_get_url_local(olsr2_url, &lite_olsr2_originator_raw, &lite_olsr2_originator_n, 1);
-  if (is_html_error(lite_olsr2_originator_raw, lite_olsr2_originator_n)) { free(lite_olsr2_originator_raw); lite_olsr2_originator_raw = NULL; lite_olsr2_originator_n = 0; }
+  if (util_http_get_olsr2_local("olsrv2info json originator", &lite_olsr2_originator_raw, &lite_olsr2_originator_n) != 0) { lite_olsr2_originator_raw = NULL; lite_olsr2_originator_n = 0; }
 
     /* Get OLSR2 neighbors */
-  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo json link");
-  util_http_get_url_local(olsr2_url, &lite_olsr2_neighbors_raw, &lite_olsr2_neighbors_n, 1);
-  if (is_html_error(lite_olsr2_neighbors_raw, lite_olsr2_neighbors_n)) { free(lite_olsr2_neighbors_raw); lite_olsr2_neighbors_raw = NULL; lite_olsr2_neighbors_n = 0; }
+  if (util_http_get_olsr2_local("nhdpinfo json link", &lite_olsr2_neighbors_raw, &lite_olsr2_neighbors_n) != 0) { lite_olsr2_neighbors_raw = NULL; lite_olsr2_neighbors_n = 0; }
   }
 
   if (lite_olsr2_version_raw && lite_olsr2_version_n > 0) {
