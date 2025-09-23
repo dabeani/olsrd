@@ -549,6 +549,7 @@ static int g_status_devices_mode = 1; /* default keep current behavior */
 static char *filter_devices_array(const char *in, int lite, int drop_empty, size_t *out_len) __attribute__((unused));
 static char *filter_devices_array(const char *in, int lite, int drop_empty, size_t *out_len) {
   if (!in) return NULL;
+  (void)lite; /* parameter currently unused in this build; keep for API compatibility */
   const char *p = in; while (*p && isspace((unsigned char)*p)) p++;
   if (*p != '[') return NULL;
   p++; /* skip '[' */
@@ -584,8 +585,13 @@ static char *filter_devices_array(const char *in, int lite, int drop_empty, size
       size_t klen = (size_t)(key_end - key_start);
       char keybuf[128]; size_t copy = klen < sizeof(keybuf)-1 ? klen : sizeof(keybuf)-1; memcpy(keybuf, key_start, copy); keybuf[copy]=0;
       /* find colon */
-      const char *colon = key_end; while (colon < obj_end && *colon != ':') colon++;
-      if (colon >= obj_end) break; colon++; while (colon < obj_end && isspace((unsigned char)*colon)) colon++;
+      const char *colon = key_end;
+      while (colon < obj_end && *colon != ':') colon++;
+      if (colon >= obj_end) {
+        break;
+      }
+      colon++;
+      while (colon < obj_end && isspace((unsigned char)*colon)) colon++;
       const char *val_start = colon; const char *val_end = val_start;
       if (val_start < obj_end && *val_start == '"') {
         val_end++; while (val_end < obj_end && *val_end != '"') { if (*val_end == '\\' && val_end + 1 < obj_end) val_end += 2; else val_end++; }
