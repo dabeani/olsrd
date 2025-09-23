@@ -19,4 +19,11 @@ int env_is_edgerouter(void);
 int env_is_linux_container(void);
 int render_connections_plain(char **buf_out, size_t *len_out);
 int render_connections_json(char **buf_out, size_t *len_out);
+
+/* Allocate a buffer with initial capacity and initialize len=0, buf[0]=0 */
+char *util_buffer_alloc(size_t initial_cap);
+
+/* Reset a buffer: free existing, allocate new with initial_cap, set len=0 */
+char *util_buffer_reset(char **buf, size_t *len, size_t *cap, size_t initial_cap);
+
 #endif

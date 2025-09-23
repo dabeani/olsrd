@@ -293,3 +293,23 @@ int env_is_linux_container(void){
 
   return 0;
 }
+
+/* Allocate a buffer with initial capacity and initialize len=0, buf[0]=0 */
+char *util_buffer_alloc(size_t initial_cap) {
+  char *buf = malloc(initial_cap);
+  if (!buf) return NULL;
+  buf[0] = '\0';
+  return buf;
+}
+
+/* Reset a buffer: free existing, allocate new with initial_cap, set len=0 */
+char *util_buffer_reset(char **buf, size_t *len, size_t *cap, size_t initial_cap) {
+  if (*buf) free(*buf);
+  *buf = NULL;
+  *cap = initial_cap;
+  *len = 0;
+  *buf = malloc(initial_cap);
+  if (!*buf) return NULL;
+  (*buf)[0] = '\0';
+  return *buf;
+}
