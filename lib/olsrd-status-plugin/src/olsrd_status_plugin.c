@@ -1316,7 +1316,7 @@ static int h_status_ping(http_request_t *r);
 static int h_status_py(http_request_t *r);
 static int h_olsr_links(http_request_t *r); static int h_olsr_routes(http_request_t *r); static int h_olsr_raw(http_request_t *r);
 static int h_olsr_links_debug(http_request_t *r);
-static int h_olsrd_json(http_request_t *r); static int h_capabilities_local(http_request_t *r);
+static int h_capabilities_local(http_request_t *r);
 static int h_olsrd(http_request_t *r);
 static int h_discover(http_request_t *r); static int h_discover_ubnt(http_request_t *r); static int h_embedded_appjs(http_request_t *r); static int h_emb_jquery(http_request_t *r); static int h_emb_bootstrap(http_request_t *r);
 static int h_connections(http_request_t *r); static int h_connections_json(http_request_t *r);
@@ -2788,9 +2788,6 @@ static int find_best_nodename_in_nodedb(const char *buf, size_t len, const char 
 
 /* forward declaration for cached hostname lookup (defined later) */
 static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen);
-/* forward declarations for OLSRd proxy cache helpers */
-static int olsr_cache_get(const char *key, char *out, size_t outlen);
-static void olsr_cache_set(const char *key, const char *val);
 
 /* Normalize devices array from ubnt-discover JSON string `ud` into a new allocated JSON array in *outbuf (caller must free). */
 static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen) {
@@ -6108,34 +6105,7 @@ static int h_embedded_appjs(http_request_t *r) {
   return 0;
 }
 
-/* Simple proxy for selected OLSRd JSON queries (whitelist q values). */
-static int h_olsrd_json(http_request_t *r) {
-  if (rl_check_and_update(r, "/olsrd.json") != 0) {
-    http_send_status(r, 429, "Too Many Requests");
-    http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n");
-    const char *b = "{\"error\":\"rate_limited\",\"retry_after\":1}\n";
-    http_write(r, b, strlen(b));
-    return 0;
-  }
-  char q[64] = "links";
-  (void)get_query_param(r, "q", q, sizeof(q));
-  /* whitelist */
-  const char *allowed[] = { "version","all","runtime","startup","neighbors","links","routes","hna","mid","topology","interfaces","2hop","sgw","pudposition","plugins","neighbours","gateways", NULL };
-  int ok = 0;
-  for (const char **p = allowed; *p; ++p) if (strcmp(*p, q) == 0) { ok = 1; break; }
-  if (!ok) { send_json(r, "{}\n"); return 0; }
-  /* consult in-memory cache first */
-  char cached[256] = "";
-  if (olsr_cache_get(q, cached, sizeof(cached))) { send_json(r, cached); return 0; }
-  char url[512]; snprintf(url, sizeof(url), "http://127.0.0.1:9090/%s", q);
-  char *out = NULL; size_t n = 0;
-  if (util_http_get_url_local(url, &out, &n, 1) == 0 && out && n>0) {
-    /* cache truncated to OLSR_CACHE_VAL-1 */
-    olsr_cache_set(q, out);
-    send_json(r, out); free(out); return 0;
-  }
-  send_json(r, "{}\n"); return 0;
-}
+
 
 static int h_emb_jquery(http_request_t *r) {
   return http_send_file(r, g_asset_root, "js/jquery.min.js", NULL);
@@ -6195,38 +6165,8 @@ int olsrd_plugin_interface_version(void) {
 #define CACHE_TTL 60
 struct kv_cache_entry { char key[128]; char val[256]; time_t ts; };
 static struct kv_cache_entry g_host_cache[CACHE_SIZE];
-/* separate cache for OLSRd proxy responses; uses same slot size as kv_cache_entry */
-static struct kv_cache_entry g_olsr_cache[CACHE_SIZE];
 /* mutex protecting both small in-process caches */
 static pthread_mutex_t g_kv_cache_lock = PTHREAD_MUTEX_INITIALIZER;
-
-static int olsr_cache_get(const char *key, char *out, size_t outlen) {
-  if (!key || !out) return 0;
-  uint64_t h = UINT64_C(1469598103934665603);
-  for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * UINT64_C(1099511628211);
-  int idx = (int)(h % CACHE_SIZE);
-  pthread_mutex_lock(&g_kv_cache_lock);
-  if (g_olsr_cache[idx].key[0] == 0) { pthread_mutex_unlock(&g_kv_cache_lock); return 0; }
-  if (strcmp(g_olsr_cache[idx].key, key) != 0) { pthread_mutex_unlock(&g_kv_cache_lock); return 0; }
-  if (difftime(time(NULL), g_olsr_cache[idx].ts) > CACHE_TTL) { pthread_mutex_unlock(&g_kv_cache_lock); return 0; }
-  /* copy up to outlen-1 chars */
-  snprintf(out, outlen, "%s", g_olsr_cache[idx].val);
-  pthread_mutex_unlock(&g_kv_cache_lock);
-  return 1;
-}
-
-static void olsr_cache_set(const char *key, const char *val) {
-  if (!key || !val) return;
-  uint64_t h = UINT64_C(1469598103934665603);
-  for (const unsigned char *p = (const unsigned char*)key; *p; ++p) h = (h ^ *p) * UINT64_C(1099511628211);
-  int idx = (int)(h % CACHE_SIZE);
-  pthread_mutex_lock(&g_kv_cache_lock);
-  snprintf(g_olsr_cache[idx].key, sizeof(g_olsr_cache[idx].key), "%s", key);
-  /* store truncated value (safe) */
-  snprintf(g_olsr_cache[idx].val, sizeof(g_olsr_cache[idx].val), "%s", val);
-  g_olsr_cache[idx].ts = time(NULL);
-  pthread_mutex_unlock(&g_kv_cache_lock);
-}
 
 static void cache_set(struct kv_cache_entry *cache, const char *key, const char *val) {
   if (!key || !val) return;
@@ -6855,7 +6795,6 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/diagnostics/reset_me", &h_diagnostics_reset_me);
   http_server_register_handler("/olsr/routes", &h_olsr_routes);
   http_server_register_handler("/olsr/raw", &h_olsr_raw); /* debug */
-  http_server_register_handler("/olsrd.json", &h_olsrd_json);
   http_server_register_handler("/capabilities", &h_capabilities_local);
   http_server_register_handler("/nodedb/refresh", &h_nodedb_refresh);
   http_server_register_handler("/metrics", &h_prometheus_metrics);
