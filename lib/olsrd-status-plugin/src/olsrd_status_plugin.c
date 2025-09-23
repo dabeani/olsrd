@@ -3260,6 +3260,44 @@ static int h_status(http_request_t *r) {
   /* uptime in seconds */
   long uptime_seconds = get_uptime_seconds();
 
+  /* OLSR2 data collection */
+  char *olsr2_version_raw = NULL; size_t olsr2_version_n = 0;
+  char *olsr2_time_raw = NULL; size_t olsr2_time_n = 0;
+  char *olsr2_originator_raw = NULL; size_t olsr2_originator_n = 0;
+  char *olsr2_neighbors_raw = NULL; size_t olsr2_neighbors_n = 0;
+  char *olsr2_routing6_raw = NULL; size_t olsr2_routing6_n = 0;
+  char def6_ip_olsr2[64] = ""; char def6_dev_olsr2[64] = "";
+  char traceroute6_to[256] = "2001:4860:4860::8888"; /* Google DNS IPv6 */
+
+  /* detect OLSR process state to decide whether to prefer IPv6 default when olsr2 is present */
+  int olsr2_on = 0, olsrd_on = 0;
+  detect_olsr_processes(&olsrd_on, &olsr2_on);
+
+  if (olsr2_on) {
+    /* Get OLSR2 version */
+    util_http_get_url_local("http://127.0.0.1:8000/telnet/olsrv2info%20json%20version", &olsr2_version_raw, &olsr2_version_n, 1);
+
+    /* Get OLSR2 time */
+    util_http_get_url_local("http://127.0.0.1:8000/telnet/systeminfo%20json%20time", &olsr2_time_raw, &olsr2_time_n, 1);
+
+    /* Get OLSR2 originator */
+    util_http_get_url_local("http://127.0.0.1:8000/telnet/olsrv2info%20json%20originator", &olsr2_originator_raw, &olsr2_originator_n, 1);
+
+    /* Get OLSR2 neighbors */
+    util_http_get_url_local("http://127.0.0.1:8000/telnet/nhdpinfo%20json%20link", &olsr2_neighbors_raw, &olsr2_neighbors_n, 1);
+
+    /* Get IPv6 routing table */
+    util_exec("/sbin/ip -6 r l proto 100 | grep -v 'default' | awk '{print $3,$1,$5}'", &olsr2_routing6_raw, &olsr2_routing6_n);
+
+    /* Get IPv6 default route */
+    char *r6 = NULL; size_t r6n = 0;
+    if (util_exec("/sbin/ip -6 route show default 2>/dev/null || /usr/sbin/ip -6 route show default 2>/dev/null || ip -6 route show default 2>/dev/null", &r6, &r6n) == 0 && r6) {
+      char *p = strstr(r6, "via "); if (p) { p += 4; char *q = strchr(p, ' '); if (q) { size_t L = q - p; if (L < sizeof(def6_ip_olsr2)) { strncpy(def6_ip_olsr2, p, L); def6_ip_olsr2[L] = 0; } } }
+      p = strstr(r6, " dev "); if (p) { p += 5; char *q = strchr(p, ' '); if (!q) q = strchr(p, '\n'); if (q) { size_t L = q - p; if (L < sizeof(def6_dev_olsr2)) { strncpy(def6_dev_olsr2, p, L); def6_dev_olsr2[L] = 0; } } }
+      free(r6);
+    }
+  }
+
   /* airosdata */
   char *airos_raw = NULL; size_t airos_n = 0;
   (void)airos_n; /* kept for symmetry with util_read_file signature */
@@ -3279,7 +3317,6 @@ static int h_status(http_request_t *r) {
 
   /* default route (IPv4 and IPv6) */
   /* detect OLSR process state to decide whether to prefer IPv6 default when olsrd2 is present */
-  int olsr2_on = 0, olsrd_on = 0; detect_olsr_processes(&olsrd_on, &olsr2_on);
   char def_ip[64] = ""; char def_dev[64] = ""; char *rout=NULL; size_t rn=0;
   /* prefer IPv4 default by default */
   if (util_exec("/sbin/ip -4 route show default 2>/dev/null || /usr/sbin/ip -4 route show default 2>/dev/null || ip -4 route show default 2>/dev/null", &rout,&rn)==0 && rout) {
@@ -3789,6 +3826,34 @@ links_done_plain_fallback:
   /* bootimage: emit minimal placeholder (detailed info is in versions JSON elsewhere) */
   APPEND(",\"bootimage\":{\"md5\":\"n/a\"}");
   }
+
+  /* OLSR2 data */
+  if (olsr2_on) {
+    if (olsr2_version_raw && olsr2_version_n > 0) {
+      APPEND(",\"olsr2_version\":%s", olsr2_version_raw);
+    } else {
+      APPEND(",\"olsr2_version\":{}");
+    }
+    if (olsr2_time_raw && olsr2_time_n > 0) {
+      APPEND(",\"olsr2_time\":%s", olsr2_time_raw);
+    } else {
+      APPEND(",\"olsr2_time\":{}");
+    }
+    if (olsr2_originator_raw && olsr2_originator_n > 0) {
+      APPEND(",\"olsr2_originator\":%s", olsr2_originator_raw);
+    } else {
+      APPEND(",\"olsr2_originator\":{}");
+    }
+    if (olsr2_neighbors_raw && olsr2_neighbors_n > 0) {
+      APPEND(",\"olsr2_neighbors\":%s", olsr2_neighbors_raw);
+    } else {
+      APPEND(",\"olsr2_neighbors\":{}");
+    }
+    APPEND(",\"def6_ip\":"); json_append_escaped(&buf,&len,&cap, def6_ip_olsr2);
+    APPEND(",\"def6_dev\":"); json_append_escaped(&buf,&len,&cap, def6_dev_olsr2);
+    APPEND(",\"traceroute6_to\":"); json_append_escaped(&buf,&len,&cap, traceroute6_to);
+  }
+
   APPEND("\n}\n");
 
   /* send and cleanup */
@@ -3797,6 +3862,11 @@ links_done_plain_fallback:
   http_write(r, buf, len);
   free(buf);
   if (airos_raw) free(airos_raw);
+  if (olsr2_version_raw) free(olsr2_version_raw);
+  if (olsr2_time_raw) free(olsr2_time_raw);
+  if (olsr2_originator_raw) free(olsr2_originator_raw);
+  if (olsr2_neighbors_raw) free(olsr2_neighbors_raw);
+  if (olsr2_routing6_raw) free(olsr2_routing6_raw);
   return 0;
 }
 
