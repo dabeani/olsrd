@@ -2131,7 +2131,7 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       while (*r) { if (*r=='{') od++; else if (*r=='}') { od--; if (od==0) { r++; break; } } r++; }
       if (!r || r<=obj) break;
   char *v; size_t vlen; char intf[128]=""; char local[128]=""; char remote[128]=""; char remote_host[512]=""; char lq[64]=""; char nlq[64]=""; char cost[64]="";
-      if (find_json_string_value(obj, "olsrInterface", &v, &vlen) || find_json_string_value(obj, "ifName", &v, &vlen)) snprintf(intf,sizeof(intf),"%.*s",(int)vlen,v);
+      if (find_json_string_value(obj, "olsrInterface", &v, &vlen) || find_json_string_value(obj, "ifName", &v, &vlen) || find_json_string_value(obj, "interface", &v, &vlen) || find_json_string_value(obj, "if", &v, &vlen) || find_json_string_value(obj, "iface", &v, &vlen)) snprintf(intf,sizeof(intf),"%.*s",(int)vlen,v);
       if (find_json_string_value(obj, "localIP", &v, &vlen) || find_json_string_value(obj, "localIp", &v, &vlen) || find_json_string_value(obj, "local", &v, &vlen)) snprintf(local,sizeof(local),"%.*s",(int)vlen,v);
       if (find_json_string_value(obj, "remoteIP", &v, &vlen) || find_json_string_value(obj, "remoteIp", &v, &vlen) || find_json_string_value(obj, "remote", &v, &vlen) || find_json_string_value(obj, "neighborIP", &v, &vlen)) snprintf(remote,sizeof(remote),"%.*s",(int)vlen,v);
       if (!remote[0]) { q = r; continue; }
@@ -2196,14 +2196,16 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
   if(!r) break;
   size_t ol=(size_t)(r-obj);
       if(!memmem(obj,ol,"remote",6) || !memmem(obj,ol,"local",5)) { scan=scan+1; continue; }
-  char *v; size_t vlen; char local[128]=""; char remote[128]=""; char remote_host[512]="";
+  char *v; size_t vlen; char intf[128]=""; char local[128]=""; char remote[128]=""; char remote_host[512]="";
+      if(find_json_string_value(obj,"olsrInterface",&v,&vlen) || find_json_string_value(obj,"ifName",&v,&vlen) || find_json_string_value(obj,"interface",&v,&vlen) || find_json_string_value(obj,"if",&v,&vlen) || find_json_string_value(obj,"iface",&v,&vlen)) snprintf(intf,sizeof(intf),"%.*s",(int)vlen,v);
       if(find_json_string_value(obj,"localIP",&v,&vlen) || find_json_string_value(obj,"local",&v,&vlen)) snprintf(local,sizeof(local),"%.*s",(int)vlen,v);
       if(find_json_string_value(obj,"remoteIP",&v,&vlen) || find_json_string_value(obj,"remote",&v,&vlen) || find_json_string_value(obj,"neighborIP",&v,&vlen)) snprintf(remote,sizeof(remote),"%.*s",(int)vlen,v);
       if(!remote[0]) { scan=r; continue; }
   if(remote[0]){ /* use cached lookup */ lookup_hostname_cached(remote, remote_host, sizeof(remote_host)); }
   if(!first) json_buf_append(&buf,&len,&cap,",");
   first=0;
-      json_buf_append(&buf,&len,&cap,"{\"intf\":\"\",\"local\":"); json_append_escaped(&buf,&len,&cap,local);
+      json_buf_append(&buf,&len,&cap,"{\"intf\":"); json_append_escaped(&buf,&len,&cap,intf);
+      json_buf_append(&buf,&len,&cap,",\"local\":"); json_append_escaped(&buf,&len,&cap,local);
       json_buf_append(&buf,&len,&cap,",\"remote\":"); json_append_escaped(&buf,&len,&cap,remote);
       json_buf_append(&buf,&len,&cap,",\"remote_host\":"); json_append_escaped(&buf,&len,&cap,remote_host);
       json_buf_append(&buf,&len,&cap,",\"lq\":\"\",\"nlq\":\"\",\"cost\":\"\",\"routes\":\"0\",\"nodes\":\"0\",\"is_default\":false}");
