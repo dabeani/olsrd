@@ -4270,45 +4270,10 @@ static int h_status_lite(http_request_t *r) {
     APP_L("\"olsr2_routing\":{}");
   }
 
-  /* Count OLSR2 nodes for statistics */
-  unsigned long olsr2_nodes = 0;
-  if (lite_olsr2_on && lite_olsr2_neighbors_raw) {
-    const char *p = lite_olsr2_neighbors_raw;
-    while (*p) {
-      if (*p == '\n') olsr2_nodes++;
-      p++;
-    }
-    if (p > lite_olsr2_neighbors_raw && *(p-1) != '\n') olsr2_nodes++;
-  }
-
-  /* Count OLSR2 routes for statistics */
-  unsigned long olsr2_routes = 0;
-  if (lite_olsr2_on && lite_olsr2_routing_raw) {
-    if (is_probably_json(lite_olsr2_routing_raw, lite_olsr2_routing_n)) {
-      // Assume it's {"routing": [ {route1}, {route2}, ... ] }
-      const char *p = strstr(lite_olsr2_routing_raw, "\"routing\":");
-      if (p) {
-        p += 10; // skip "routing":
-        while (*p && *p != '[') p++;
-        if (*p == '[') p++;
-        int depth = 1;
-        while (*p && depth > 0) {
-          if (*p == '{') { if (depth == 1) olsr2_routes++; depth++; }
-          else if (*p == '}') depth--;
-          else if (*p == ']') { if (depth == 1) break; }
-          p++;
-        }
-      }
-    } else {
-      // Escaped, count lines
-      const char *p = lite_olsr2_routing_raw;
-      while (*p) {
-        if (*p == '\n') olsr2_routes++;
-        p++;
-      }
-      if (p > lite_olsr2_routing_raw && *(p-1) != '\n') olsr2_routes++;
-    }
-  }
+  /* OLSR2 counts are intentionally not calculated here — OLSR (v1) and
+   * OLSR2 are separate protocols and their metrics must not be mixed.
+   * The plugin still exposes raw OLSR2 JSON under `olsr2_*` fields above
+   * but does not derive aggregate counts from them. */
 
   /* Free OLSR2 data */
   if (lite_olsr2_version_raw) free(lite_olsr2_version_raw);
@@ -4329,10 +4294,11 @@ static int h_status_lite(http_request_t *r) {
     METRIC_LOAD_UNIQUE(unique_routes, unique_nodes);
   unsigned long olsr_routes = unique_routes;
   unsigned long olsr_nodes = unique_nodes;
-  /* If OLSRd (v1) is running prefer in-memory collectors so counters reflect
-   * the live core state. Otherwise fall back to metric atomics only when
-   * both unique route/node metrics are zero. */
-  if (lite_olsrd_on || (olsr_routes == 0 && olsr_nodes == 0)) {
+  /* If OLSRd (v1) is present/running prefer in-memory collectors so counters
+   * reflect the live core state. Do not fall back to metric atomics when
+   * metrics are non-zero; prefer collectors whenever the binary exists or
+   * the process is detected. */
+  if (lite_olsrd_on || lite_olsrd_exists) {
       /* Build lightweight counts using in-memory collectors only (no HTTP probes).
        * We need links+routes+topology to compute per-neighbor node/route counts.
        */
@@ -4435,12 +4401,9 @@ static int h_status_lite(http_request_t *r) {
             olsr_nodes = olsr_routes;
             METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
           }
-          if (lite_olsr2_on && olsr2_nodes > olsr_nodes) {
-            olsr_nodes = olsr2_nodes;
-            olsr_routes = olsr2_routes;
-            METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
-            if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: using OLSR2 counts nodes=%lu routes=%lu\n", olsr2_nodes, olsr2_routes);
-          }
+          /* Intentionally do NOT mix OLSR2 counts into OLSRd (v1) statistics.
+           * OLSR and OLSR2 are separate protocols and their metrics should
+           * not overwrite each other. */
           if (norm) free(norm);
           free(combined);
         }
@@ -4448,6 +4411,10 @@ static int h_status_lite(http_request_t *r) {
       if (links_raw) free(links_raw);
       if (routes_raw) free(routes_raw);
       if (topology_raw) free(topology_raw);
+      if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: counting path=collectors olsr_nodes=%lu olsr_routes=%lu\n", olsr_nodes, olsr_routes);
+    }
+    else {
+      if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: counting path=metrics-only olsr_nodes=%lu olsr_routes=%lu\n", olsr_nodes, olsr_routes);
     }
     /* Attempt to include memory stats (Linux /proc/meminfo) for the lightweight payload */
     unsigned long mem_total_kb = 0, mem_free_kb = 0, mem_available_kb = 0;
