@@ -13,6 +13,9 @@ int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen);
 /* use shared JSON helpers */
 #include "json_helpers.h"
 
+/* extern declaration for hostname lookup */
+extern void lookup_hostname_cached(const char *ip, char *out, size_t outlen);
+
 /* strip simple HTML tags: keep inner text of <...>text</...> or cut at '<' */
 static void strip_tags_and_trim(char *s) {
   if (!s || !s[0]) return;
@@ -170,10 +173,14 @@ int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen) 
         }
       }
       if (!first) { json_buf_append(&buf,&len,&cap,","); } first = 0;
+      char remote_host[512] = "";
+      if (remote && remote[0]) {
+        lookup_hostname_cached(remote, remote_host, sizeof(remote_host));
+      }
       json_buf_append(&buf,&len,&cap,"{\"intf\":"); json_append_escaped(&buf,&len,&cap,intf?intf:"");
       json_buf_append(&buf,&len,&cap,",\"local\":"); json_append_escaped(&buf,&len,&cap,local?local:"");
       json_buf_append(&buf,&len,&cap,",\"remote\":"); json_append_escaped(&buf,&len,&cap,remote?remote:"");
-      json_buf_append(&buf,&len,&cap,",\"remote_host\":\"\"");
+      json_buf_append(&buf,&len,&cap,",\"remote_host\":"); json_append_escaped(&buf,&len,&cap,remote_host);
       json_buf_append(&buf,&len,&cap,",\"lq\":"); json_append_escaped(&buf,&len,&cap,lq?lq:"");
       json_buf_append(&buf,&len,&cap,",\"nlq\":"); json_append_escaped(&buf,&len,&cap,nlq?nlq:"");
       json_buf_append(&buf,&len,&cap,",\"cost\":"); json_append_escaped(&buf,&len,&cap,cost?cost:"");

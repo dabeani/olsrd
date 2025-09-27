@@ -402,7 +402,7 @@ static int resolve_ip_to_hostname(const char *ip, char *out, size_t outlen) {
 
 /* Cached hostname lookup forward declaration (defined later). Placed here so
  * callers early in the file can use cached lookups without implicit decls. */
-static void lookup_hostname_cached(const char *ip, char *out, size_t outlen);
+void lookup_hostname_cached(const char *ip, char *out, size_t outlen);
 
 /* Runtime check for UBNT debug env var. Prefer environment toggle so operators
  * can enable verbose UBNT discovery traces without recompiling. Returns 1 when
@@ -2693,7 +2693,7 @@ static int find_best_nodename_in_nodedb(const char *buf, size_t len, const char 
 }
 
 /* forward declaration for cached hostname lookup (defined later) */
-static void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen);
+void lookup_hostname_cached(const char *ipv4, char *out, size_t outlen);
 
 /* Normalize devices array from ubnt-discover JSON string `ud` into a new allocated JSON array in *outbuf (caller must free). */
 static int normalize_ubnt_devices(const char *ud, char **outbuf, size_t *outlen) {
@@ -6360,7 +6360,7 @@ static int cache_get(struct kv_cache_entry *cache, const char *key, char *out, s
 }
 
 /* lookup hostname for an ip string using cache, gethostbyaddr and nodedb files/remote as fallback */
-static void lookup_hostname_cached(const char *ip, char *out, size_t outlen) {
+void lookup_hostname_cached(const char *ip, char *out, size_t outlen) {
   if (!ip || !out) return;
   out[0]=0;
   if (cache_get(g_host_cache, ip, out, outlen) && out[0]) return;
