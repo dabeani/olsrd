@@ -6371,6 +6371,12 @@ static void lookup_hostname_cached(const char *ip, char *out, size_t outlen) {
   }
   /* try cached remote node_db first */
   fetch_remote_nodedb_if_needed();
+  if (!g_nodedb_cached || g_nodedb_cached_len == 0) {
+    /* if cache is still empty, try synchronous fetch */
+    if (!g_nodedb_fetch_in_progress) {
+      fetch_remote_nodedb();
+    }
+  }
   if (g_nodedb_cached && g_nodedb_cached_len > 0) {
     char needle[256];
     if (snprintf(needle, sizeof(needle), "\"%s\":", ip) >= (int)sizeof(needle)) {
