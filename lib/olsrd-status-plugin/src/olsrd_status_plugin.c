@@ -535,6 +535,8 @@ static int g_cfg_ubnt_cache_ttl_s_set = 0;
  */
 static int g_olsr2_telnet_port = 8000;
 static int g_cfg_olsr2_telnet_port_set = 0;
+static int g_olsrd_jsoninfo_port = 9090;
+static int g_cfg_olsrd_jsoninfo_port_set = 0;
 static int g_cfg_status_lite_ttl_s_set = 0;
 /* Control whether fetch queue operations are logged to stderr (0=no, 1=yes) */
 static int g_fetch_log_queue = 0;
@@ -3129,6 +3131,11 @@ static void build_olsr2_url(char *buf, size_t bufsize, const char *command) {
   snprintf(buf, bufsize, "http://127.0.0.1:%d/telnet/%s", g_olsr2_telnet_port, enc);
 }
 
+/* Build OLSRd jsoninfo URL with configurable port */
+static void build_olsrd_url(char *buf, size_t bufsize, const char *endpoint) {
+  snprintf(buf, bufsize, "http://127.0.0.1:%d/%s", g_olsrd_jsoninfo_port, endpoint);
+}
+
 /* Detect simple HTML/HTTP error responses so we don't embed them into JSON
  * (many telnet bridges return an HTML 400 page on bad requests). We only
  * need a lightweight check: HTML starts with '<' or contains the phrase
@@ -4999,6 +5006,15 @@ static int h_olsr_links(http_request_t *r) {
       } else { if (tmp) { free(tmp); tmp = NULL; tlen = 0; } }
     }
   }
+  /* HTTP fallbacks for olsrd (jsoninfo) - only if olsr2 is not running */
+  if (olsrd_on && !olsr2_on && (!neighbors_raw || nnr == 0)) {
+    char *tmp = NULL; size_t tlen = 0;
+    char olsrd_url[256];
+    build_olsrd_url(olsrd_url, sizeof(olsrd_url), "neighbors");
+    if (util_http_get_url_local(olsrd_url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
+      neighbors_raw = tmp; nnr = tlen;
+    } else { if (tmp) { free(tmp); tmp = NULL; tlen = 0; } }
+  }
   /* collect routes/topology via in-memory collectors */
   char *routes_raw = NULL;
   {
@@ -5021,6 +5037,25 @@ static int h_olsr_links(http_request_t *r) {
       }
       abuf_free(&ab);
     }
+  }
+  /* HTTP fallbacks for olsrd routes/topology (jsoninfo) */
+  if (olsrd_on && !olsr2_on && (!routes_raw || strlen(routes_raw) == 0)) {
+    char *tmp = NULL; size_t tlen = 0;
+    char olsrd_url[256];
+    build_olsrd_url(olsrd_url, sizeof(olsrd_url), "routes");
+    if (util_http_get_url_local(olsrd_url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
+      if (routes_raw) free(routes_raw);
+      routes_raw = tmp;
+    } else { if (tmp) { free(tmp); tmp = NULL; tlen = 0; } }
+  }
+  if (olsrd_on && !olsr2_on && (!topology_raw || strlen(topology_raw) == 0)) {
+    char *tmp = NULL; size_t tlen = 0;
+    char olsrd_url[256];
+    build_olsrd_url(olsrd_url, sizeof(olsrd_url), "topology");
+    if (util_http_get_url_local(olsrd_url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
+      if (topology_raw) free(topology_raw);
+      topology_raw = tmp;
+    } else { if (tmp) { free(tmp); tmp = NULL; tlen = 0; } }
   }
   char *norm_links=NULL; size_t nlinks=0; {
     size_t l1 = links_raw?strlen(links_raw):0;
@@ -5267,6 +5302,7 @@ static int h_olsr_raw(http_request_t *r) {
     send_rate_limit_error(r);
     return 0;
   }
+  int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
   char *links_raw = NULL;
   char *routes_raw = NULL;
   char *topology_raw = NULL;
@@ -5299,6 +5335,25 @@ static int h_olsr_raw(http_request_t *r) {
       }
       abuf_free(&tab);
     }
+  }
+  /* HTTP fallbacks for olsrd routes/topology (jsoninfo) */
+  if (olsrd_on && !olsr2_on && (!routes_raw || strlen(routes_raw) == 0)) {
+    char *tmp = NULL; size_t tlen = 0;
+    char olsrd_url[256];
+    build_olsrd_url(olsrd_url, sizeof(olsrd_url), "routes");
+    if (util_http_get_url_local(olsrd_url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
+      if (routes_raw) free(routes_raw);
+      routes_raw = tmp;
+    } else { if (tmp) { free(tmp); tmp = NULL; tlen = 0; } }
+  }
+  if (olsrd_on && !olsr2_on && (!topology_raw || strlen(topology_raw) == 0)) {
+    char *tmp = NULL; size_t tlen = 0;
+    char olsrd_url[256];
+    build_olsrd_url(olsrd_url, sizeof(olsrd_url), "topology");
+    if (util_http_get_url_local(olsrd_url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
+      if (topology_raw) free(topology_raw);
+      topology_raw = tmp;
+    } else { if (tmp) { free(tmp); tmp = NULL; tlen = 0; } }
   }
   /* Attempt to provide structured JSON arrays in addition to raw string fields for compatibility.
    * links: normalized array via normalize_olsrd_links()
@@ -6019,6 +6074,7 @@ static int h_diagnostics_json(http_request_t *r) {
       { "ubnt_select_timeout_cap_ms", &g_cfg_ubnt_select_timeout_cap_ms_set, "OLSRD_STATUS_UBNT_SELECT_TIMEOUT_CAP_MS", "params.ubnt_select_timeout_cap_ms.desc" },
       { "ubnt_cache_ttl_s", &g_cfg_ubnt_cache_ttl_s_set, "OLSRD_STATUS_UBNT_CACHE_TTL_S", "params.ubnt_cache_ttl_s.desc" },
       { "olsr2_telnet_port", &g_cfg_olsr2_telnet_port_set, "OLSRD_STATUS_OLSR2_TELNET_PORT", "params.olsr2_telnet_port.desc" },
+      { "olsrd_jsoninfo_port", &g_cfg_olsrd_jsoninfo_port_set, "OLSRD_STATUS_OLSRD_JSONINFO_PORT", "params.olsrd_jsoninfo_port.desc" },
   { "arp_cache_ttl_s", NULL, "OLSRD_STATUS_ARP_CACHE_TTL", "params.arp_cache_ttl_s.desc" },
       { "status_lite_ttl_s", &g_cfg_status_lite_ttl_s_set, "OLSRD_STATUS_STATUS_LITE_TTL_S", "params.status_lite_ttl_s.desc" },
       { "status_devices_mode", NULL, "OLSRD_STATUS_STATUS_DEVICES_MODE", "params.status_devices_mode.desc" },
@@ -6785,6 +6841,17 @@ int olsrd_plugin_init(void) {
           g_olsr2_telnet_port = (int)v;
           fprintf(stderr, "[status-plugin] setting olsr2 telnet port from env: %d\n", g_olsr2_telnet_port);
         } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_OLSR2_TELNET_PORT value: %s (ignored)\n", env_port);
+      }
+    }
+    /* olsrd jsoninfo port override */
+    if (!g_cfg_olsrd_jsoninfo_port_set) {
+      const char *env_port = getenv("OLSRD_STATUS_OLSRD_JSONINFO_PORT");
+      if (env_port && env_port[0]) {
+        char *endptr = NULL; long v = strtol(env_port, &endptr, 10);
+        if (endptr && *endptr == '\0' && v >= 1 && v <= 65535) {
+          g_olsrd_jsoninfo_port = (int)v;
+          fprintf(stderr, "[status-plugin] setting olsrd jsoninfo port from env: %d\n", g_olsrd_jsoninfo_port);
+        } else fprintf(stderr, "[status-plugin] invalid OLSRD_STATUS_OLSRD_JSONINFO_PORT value: %s (ignored)\n", env_port);
       }
     }
     /* status_lite TTL override (seconds) */
