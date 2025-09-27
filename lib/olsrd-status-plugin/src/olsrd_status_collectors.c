@@ -68,7 +68,7 @@ void status_collect_neighbors(struct autobuf *ab) {
 void status_collect_links(struct autobuf *abuf) {
   struct link_entry *my_link;
   abuf_puts(abuf, "Table: Links\n");
-  abuf_puts(abuf, "Local IP\tRemote IP\tHyst.\tLQ\tNLQ\tCost\n");
+  abuf_puts(abuf, "Local IP\tRemote IP\tHyst.\tLQ\tNLQ\tCost\tInterface\n");
 
   OLSR_FOR_ALL_LINK_ENTRIES(my_link) {
     struct ipaddr_str localAddr;
@@ -76,12 +76,13 @@ void status_collect_links(struct autobuf *abuf) {
     struct lqtextbuffer lqbuffer;
     struct lqtextbuffer costbuffer;
 
-    abuf_appendf(abuf, "%s\t%s\t%u.%03u\t%s\t%s\n",
+    abuf_appendf(abuf, "%s\t%s\t%u.%03u\t%s\t%s\t%s\n",
       olsr_ip_to_string(&localAddr, &my_link->local_iface_addr),
       olsr_ip_to_string(&remoteAddr, &my_link->neighbor_iface_addr),
       0, 0,
       get_link_entry_text(my_link, '\t', &lqbuffer),
-      get_linkcost_text(my_link->linkcost, false, &costbuffer));
+      get_linkcost_text(my_link->linkcost, false, &costbuffer),
+      my_link->if_name ? my_link->if_name : "");
   } OLSR_FOR_ALL_LINK_ENTRIES_END(my_link);
   abuf_puts(abuf, "\n");
 }
