@@ -9,6 +9,9 @@
  * compiled as a separate translation unit. The function is used from
  * other files and declared there as well. */
 int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen);
+int normalize_olsrd_neighbors_plain(const char *raw, char **outbuf, size_t *outlen);
+int normalize_olsrd_routes_plain(const char *raw, char **outbuf, size_t *outlen);
+int normalize_olsrd_topology_plain(const char *raw, char **outbuf, size_t *outlen);
 
 /* use shared JSON helpers */
 #include "json_helpers.h"
@@ -204,5 +207,178 @@ int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen) 
   *outlen = len;
   if (hdr) free(hdr);
   if (tmp) free(tmp);
+  return 0;
+}
+
+int normalize_olsrd_neighbors_plain(const char *raw, char **outbuf, size_t *outlen) {
+  if (!raw || !outbuf || !outlen) return -1;
+  *outbuf = NULL; *outlen = 0;
+  const char *tbl = strstr(raw, "Table: Neighbors");
+  if (!tbl) return -1;
+  const char *p = tbl;
+  while (*p && *p != '\n') p++;
+  if (*p == '\n') p++;
+  const char *hdr_start = p;
+  const char *hdr_end = strchr(hdr_start, '\n');
+  if (!hdr_end) return -1;
+  size_t hdr_len = (size_t)(hdr_end - hdr_start);
+  char *hdr = malloc(hdr_len + 1);
+  if (!hdr) return -1;
+  memcpy(hdr, hdr_start, hdr_len); hdr[hdr_len] = '\0';
+
+  p = hdr_end; if (*p=='\n') p++;
+  size_t cap = 4096; size_t len = 0; char *buf = NULL;
+  json_buf_append(&buf,&len,&cap,"["); int first = 1;
+  while (*p && *p != '\0') {
+    if (strncmp(p, "Table:", 6) == 0) break;
+    const char *lnend = strchr(p, '\n'); if (!lnend) lnend = p + strlen(p);
+    size_t lsz = (size_t)(lnend - p);
+    if (lsz == 0 || (lsz==1 && p[0]=='\r')) { p = (*lnend=='\n') ? lnend+1 : lnend; continue; }
+    char *row = malloc(lsz+1); if (!row) break; memcpy(row, p, lsz); row[lsz]=0;
+    while (lsz > 0 && (row[lsz-1] == '\r' || row[lsz-1] == '\n')) { row[--lsz] = '\0'; }
+    char *fields[16]; int f = 0;
+    char *rtmp = row;
+    char *tk = strtok(rtmp, "\t");
+    if (!tk) tk = strtok(rtmp, " \t");
+    while (tk && f < (int)(sizeof(fields)/sizeof(fields[0]))) { fields[f++] = tk; tk = strtok(NULL, "\t"); if (!tk) tk = strtok(NULL, " \t"); }
+    if (f >= 6) {
+      char *originator = fields[0];
+      char *sym = fields[1];
+      char *mpr = fields[2];
+      char *mprs = fields[3];
+      char *willingness = fields[4];
+      char *twoHopCount = fields[5];
+      strip_tags_and_trim(originator); strip_tags_and_trim(sym); strip_tags_and_trim(mpr); strip_tags_and_trim(mprs); strip_tags_and_trim(willingness); strip_tags_and_trim(twoHopCount);
+      if (!first) json_buf_append(&buf,&len,&cap,",");
+      json_buf_append(&buf,&len,&cap,"{\"originator\":"); json_append_escaped(&buf,&len,&cap,originator?originator:"");
+      json_buf_append(&buf,&len,&cap,",\"sym\":"); json_append_escaped(&buf,&len,&cap,sym?sym:"");
+      json_buf_append(&buf,&len,&cap,",\"mpr\":"); json_append_escaped(&buf,&len,&cap,mpr?mpr:"");
+      json_buf_append(&buf,&len,&cap,",\"mprs\":"); json_append_escaped(&buf,&len,&cap,mprs?mprs:"");
+      json_buf_append(&buf,&len,&cap,",\"willingness\":"); json_append_escaped(&buf,&len,&cap,willingness?willingness:"");
+      json_buf_append(&buf,&len,&cap,",\"twoHopCount\":"); json_append_escaped(&buf,&len,&cap,twoHopCount?twoHopCount:"");
+      json_buf_append(&buf,&len,&cap,"}");
+      first = 0;
+    }
+    free(row);
+    p = lnend + 1;
+  }
+  json_buf_append(&buf,&len,&cap,"]");
+  *outbuf = buf;
+  *outlen = len;
+  if (hdr) free(hdr);
+  return 0;
+}
+
+int normalize_olsrd_routes_plain(const char *raw, char **outbuf, size_t *outlen) {
+  if (!raw || !outbuf || !outlen) return -1;
+  *outbuf = NULL; *outlen = 0;
+  const char *tbl = strstr(raw, "Table: Routes");
+  if (!tbl) return -1;
+  const char *p = tbl;
+  while (*p && *p != '\n') p++;
+  if (*p == '\n') p++;
+  const char *hdr_start = p;
+  const char *hdr_end = strchr(hdr_start, '\n');
+  if (!hdr_end) return -1;
+  size_t hdr_len = (size_t)(hdr_end - hdr_start);
+  char *hdr = malloc(hdr_len + 1);
+  if (!hdr) return -1;
+  memcpy(hdr, hdr_start, hdr_len); hdr[hdr_len] = '\0';
+
+  p = hdr_end; if (*p=='\n') p++;
+  size_t cap = 4096; size_t len = 0; char *buf = NULL;
+  json_buf_append(&buf,&len,&cap,"["); int first = 1;
+  while (*p && *p != '\0') {
+    if (strncmp(p, "Table:", 6) == 0) break;
+    const char *lnend = strchr(p, '\n'); if (!lnend) lnend = p + strlen(p);
+    size_t lsz = (size_t)(lnend - p);
+    if (lsz == 0 || (lsz==1 && p[0]=='\r')) { p = (*lnend=='\n') ? lnend+1 : lnend; continue; }
+    char *row = malloc(lsz+1); if (!row) break; memcpy(row, p, lsz); row[lsz]=0;
+    while (lsz > 0 && (row[lsz-1] == '\r' || row[lsz-1] == '\n')) { row[--lsz] = '\0'; }
+    char *fields[16]; int f = 0;
+    char *rtmp = row;
+    char *tk = strtok(rtmp, "\t");
+    if (!tk) tk = strtok(rtmp, " \t");
+    while (tk && f < (int)(sizeof(fields)/sizeof(fields[0]))) { fields[f++] = tk; tk = strtok(NULL, "\t"); if (!tk) tk = strtok(NULL, " \t"); }
+    if (f >= 5) {
+      char *destination = fields[0];
+      char *gateway = fields[1];
+      char *metric = fields[2];
+      char *etx = fields[3];
+      char *interface = fields[4];
+      strip_tags_and_trim(destination); strip_tags_and_trim(gateway); strip_tags_and_trim(metric); strip_tags_and_trim(etx); strip_tags_and_trim(interface);
+      if (!first) json_buf_append(&buf,&len,&cap,",");
+      json_buf_append(&buf,&len,&cap,"{\"destination\":"); json_append_escaped(&buf,&len,&cap,destination?destination:"");
+      json_buf_append(&buf,&len,&cap,",\"gateway\":"); json_append_escaped(&buf,&len,&cap,gateway?gateway:"");
+      json_buf_append(&buf,&len,&cap,",\"metric\":"); json_append_escaped(&buf,&len,&cap,metric?metric:"");
+      json_buf_append(&buf,&len,&cap,",\"etx\":"); json_append_escaped(&buf,&len,&cap,etx?etx:"");
+      json_buf_append(&buf,&len,&cap,",\"interface\":"); json_append_escaped(&buf,&len,&cap,interface?interface:"");
+      json_buf_append(&buf,&len,&cap,"}");
+      first = 0;
+    }
+    free(row);
+    p = lnend + 1;
+  }
+  json_buf_append(&buf,&len,&cap,"]");
+  *outbuf = buf;
+  *outlen = len;
+  if (hdr) free(hdr);
+  return 0;
+}
+
+int normalize_olsrd_topology_plain(const char *raw, char **outbuf, size_t *outlen) {
+  if (!raw || !outbuf || !outlen) return -1;
+  *outbuf = NULL; *outlen = 0;
+  const char *tbl = strstr(raw, "Table: Topology");
+  if (!tbl) return -1;
+  const char *p = tbl;
+  while (*p && *p != '\n') p++;
+  if (*p == '\n') p++;
+  const char *hdr_start = p;
+  const char *hdr_end = strchr(hdr_start, '\n');
+  if (!hdr_end) return -1;
+  size_t hdr_len = (size_t)(hdr_end - hdr_start);
+  char *hdr = malloc(hdr_len + 1);
+  if (!hdr) return -1;
+  memcpy(hdr, hdr_start, hdr_len); hdr[hdr_len] = '\0';
+
+  p = hdr_end; if (*p=='\n') p++;
+  size_t cap = 4096; size_t len = 0; char *buf = NULL;
+  json_buf_append(&buf,&len,&cap,"["); int first = 1;
+  while (*p && *p != '\0') {
+    if (strncmp(p, "Table:", 6) == 0) break;
+    const char *lnend = strchr(p, '\n'); if (!lnend) lnend = p + strlen(p);
+    size_t lsz = (size_t)(lnend - p);
+    if (lsz == 0 || (lsz==1 && p[0]=='\r')) { p = (*lnend=='\n') ? lnend+1 : lnend; continue; }
+    char *row = malloc(lsz+1); if (!row) break; memcpy(row, p, lsz); row[lsz]=0;
+    while (lsz > 0 && (row[lsz-1] == '\r' || row[lsz-1] == '\n')) { row[--lsz] = '\0'; }
+    char *fields[16]; int f = 0;
+    char *rtmp = row;
+    char *tk = strtok(rtmp, "\t");
+    if (!tk) tk = strtok(rtmp, " \t");
+    while (tk && f < (int)(sizeof(fields)/sizeof(fields[0]))) { fields[f++] = tk; tk = strtok(NULL, "\t"); if (!tk) tk = strtok(NULL, " \t"); }
+    if (f >= 5) {
+      char *destinationIP = fields[0];
+      char *lastHopIP = fields[1];
+      char *lq = fields[2];
+      char *nlq = fields[3];
+      char *cost = fields[4];
+      strip_tags_and_trim(destinationIP); strip_tags_and_trim(lastHopIP); strip_tags_and_trim(lq); strip_tags_and_trim(nlq); strip_tags_and_trim(cost);
+      if (!first) json_buf_append(&buf,&len,&cap,",");
+      json_buf_append(&buf,&len,&cap,"{\"destinationIP\":"); json_append_escaped(&buf,&len,&cap,destinationIP?destinationIP:"");
+      json_buf_append(&buf,&len,&cap,",\"lastHopIP\":"); json_append_escaped(&buf,&len,&cap,lastHopIP?lastHopIP:"");
+      json_buf_append(&buf,&len,&cap,",\"lq\":"); json_append_escaped(&buf,&len,&cap,lq?lq:"");
+      json_buf_append(&buf,&len,&cap,",\"nlq\":"); json_append_escaped(&buf,&len,&cap,nlq?nlq:"");
+      json_buf_append(&buf,&len,&cap,",\"cost\":"); json_append_escaped(&buf,&len,&cap,cost?cost:"");
+      json_buf_append(&buf,&len,&cap,"}");
+      first = 0;
+    }
+    free(row);
+    p = lnend + 1;
+  }
+  json_buf_append(&buf,&len,&cap,"]");
+  *outbuf = buf;
+  *outlen = len;
+  if (hdr) free(hdr);
   return 0;
 }

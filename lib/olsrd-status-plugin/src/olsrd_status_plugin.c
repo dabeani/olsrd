@@ -2229,6 +2229,9 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
  * will pick the external symbol when available.
  */
 int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen);
+int normalize_olsrd_neighbors_plain(const char *raw, char **outbuf, size_t *outlen);
+int normalize_olsrd_routes_plain(const char *raw, char **outbuf, size_t *outlen);
+int normalize_olsrd_topology_plain(const char *raw, char **outbuf, size_t *outlen);
 
 
 /* UBNT discover output acquisition using internal discovery only */
@@ -5053,7 +5056,9 @@ static int h_olsr_links(http_request_t *r) {
       fprintf(stderr, "[status-plugin] combined OLSR input too large (%zu bytes), skipping normalization\n", total);
     }
   }
-  char *norm_neighbors=NULL; size_t nneigh=0; if(neighbors_raw && normalize_olsrd_neighbors(neighbors_raw,&norm_neighbors,&nneigh)!=0){ norm_neighbors=NULL; }
+  char *norm_neighbors=NULL; size_t nneigh=0; if(neighbors_raw && normalize_olsrd_neighbors(neighbors_raw,&norm_neighbors,&nneigh)!=0){ 
+    if(neighbors_raw && normalize_olsrd_neighbors_plain(neighbors_raw,&norm_neighbors,&nneigh)!=0){ norm_neighbors=NULL; }
+  }
   /* If olsr2 is present, attempt to fetch a small olsr2info payload (originator + neighbor_count) via telnet bridge */
   char *olsr2info_json = NULL;
   if (olsr2_on) {
@@ -5335,7 +5340,13 @@ static int h_olsr_raw(http_request_t *r) {
 
   char *routes_struct = NULL; char *topology_struct = NULL;
   routes_struct = extract_json_array_from_blob(routes_raw);
+  if (!routes_struct && routes_raw) {
+    size_t dummy; normalize_olsrd_routes_plain(routes_raw, &routes_struct, &dummy);
+  }
   topology_struct = extract_json_array_from_blob(topology_raw);
+  if (!topology_struct && topology_raw) {
+    size_t dummy; normalize_olsrd_topology_plain(topology_raw, &topology_struct, &dummy);
+  }
 
   char *buf=NULL; size_t cap=8192,len=0; buf=malloc(cap); if(!buf){ send_json_response(r,"{}\n"); goto done; } buf[0]=0;
   #define APP_RAW(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { if(buf){ free(buf);} send_json_response(r,"{}\n"); goto done; } } while(0)
