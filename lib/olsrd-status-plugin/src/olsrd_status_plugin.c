@@ -1261,6 +1261,7 @@ static int h_status_ping(http_request_t *r);
 static int h_status_py(http_request_t *r);
 static int h_olsr_links(http_request_t *r); static int h_olsr_routes(http_request_t *r); static int h_olsr_raw(http_request_t *r);
 static int h_olsr_links_debug(http_request_t *r);
+static int h_olsr2_links(http_request_t *r);
 static int h_capabilities_local(http_request_t *r);
 static int h_olsrd(http_request_t *r);
 static int h_discover(http_request_t *r); static int h_discover_ubnt(http_request_t *r); static int h_embedded_appjs(http_request_t *r); static int h_emb_jquery(http_request_t *r); static int h_emb_bootstrap(http_request_t *r);
@@ -5354,6 +5355,49 @@ static int h_olsr_links_debug(http_request_t *r) {
   return 0;
 }
 
+static int h_olsr2_links(http_request_t *r) {
+  if (rl_check_and_update(r, "/olsr2/links") != 0) {
+    send_rate_limit_error(r);
+    return 0;
+  }
+  int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
+  if (!olsr2_on) {
+    send_json_response(r, "{\"links\":[]}\n");
+    return 0;
+  }
+  /* Fetch OLSR2 links via telnet bridge */
+  char *links_raw = NULL; size_t links_len = 0;
+  char olsr2_url[256];
+  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo json link");
+  if (util_http_get_url_local(olsr2_url, &links_raw, &links_len, 1) == 0 && links_raw && links_len > 0) {
+    if (g_log_buf_lines > 0) plugin_log_trace("telnet: fetched nhdpinfo json link (%zu bytes)", links_len);
+  } else {
+    if (links_raw) { free(links_raw); links_raw = NULL; }
+    send_json_response(r, "{\"links\":[]}\n");
+    return 0;
+  }
+  /* Normalize OLSR2 links - since it's already JSON, use as is */
+  char *norm_links = NULL;
+  if (links_raw && links_raw[0] == '[') {
+    norm_links = strdup(links_raw);
+  } else {
+    // If not array, wrap in array or something, but assume it's array
+    norm_links = NULL;
+  }
+  /* Build JSON */
+  char *buf = NULL; size_t cap = 4096, len = 0; buf = malloc(cap); if (!buf) { send_json_response(r, "{\"links\":[]}\n"); goto done2; } buf[0] = 0;
+  #define APP_O2(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { if(buf){ free(buf);} send_json_response(r,"{\"links\":[]}\n"); goto done2; } } while(0)
+  APP_O2("{");
+  if (norm_links) APP_O2("\"links\":%s", norm_links); else APP_O2("\"links\":[]");
+  APP_O2("}\n");
+  http_send_status(r, 200, "OK"); http_printf(r, "Content-Type: application/json; charset=utf-8\r\n\r\n"); http_write(r, buf, len);
+  free(buf);
+done2:
+  if (links_raw) free(links_raw);
+  if (norm_links) free(norm_links);
+  return 0;
+}
+
 /* --- Debug raw OLSR data: /olsr/raw (NOT for production; helps diagnose node counting) --- */
 static int h_olsr_raw(http_request_t *r) {
   if (rl_check_and_update(r, "/olsr/raw") != 0) {
@@ -7093,6 +7137,7 @@ int olsrd_plugin_init(void) {
   http_server_register_handler("/status/traceroute", &h_status_traceroute);
   http_server_register_handler("/olsr/links", &h_olsr_links);
   http_server_register_handler("/olsr/links_debug", &h_olsr_links_debug);
+  http_server_register_handler("/olsr2/links", &h_olsr2_links);
   http_server_register_handler("/status/links_live", &h_status_links_live);
   http_server_register_handler("/diagnostics/reset", &h_diagnostics_reset);
   http_server_register_handler("/diagnostics/reset_me", &h_diagnostics_reset_me);
