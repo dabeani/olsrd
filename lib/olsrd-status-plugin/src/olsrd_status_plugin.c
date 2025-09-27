@@ -5393,6 +5393,87 @@ static int h_olsr2_links(http_request_t *r) {
     /* Not JSON - leave as empty */
     norm_links = NULL;
   }
+
+  /* Further normalization: some telnet outputs wrap links inside objects like
+   * { "links": [ { "link": [ ... ] } ] } or similar. Detect occurrences of
+   * a nested "link":[...] array and concatenate all inner arrays into a
+   * single top-level JSON array so the UI sees an array of link objects.
+   */
+  if (norm_links) {
+    const char *needle1 = "\"link\"\s*:\s*\["; /* regex-like hint for humans */
+    /* Simple scan for the substring '"link":[' (ignoring whitespace) */
+    const char *scan = norm_links;
+    int found_any = 0;
+    /* We'll build a combined array only if nested arrays are found */
+    /* Search for sequences of '"link"' followed by ':' then '[' */
+    while (*scan) {
+      const char *q = strstr(scan, "\"link\"");
+      if (!q) break;
+      /* move past "link" */
+      const char *r = q + 6;
+      /* skip whitespace */
+      while (*r && (*r==' '||*r=='\n'||*r=='\r'||*r=='\t')) r++;
+      if (*r != ':') { scan = r; continue; }
+      r++; while (*r && (*r==' '||*r=='\n'||*r=='\r'||*r=='\t')) r++;
+      if (*r != '[') { scan = r; continue; }
+      found_any = 1; break;
+    }
+    if (found_any) {
+      /* Extract all bracketed arrays following occurrences of "link":[ ... ] */
+      size_t outcap = 4096; size_t outlen = 0; char *out = malloc(outcap);
+      if (out) {
+        out[0] = '['; outlen = 1;
+        const char *s2 = norm_links;
+        int first_item = 1;
+        while ((s2 = strstr(s2, "\"link\"")) != NULL) {
+          const char *r = s2 + 6;
+          while (*r && (*r==' '||*r=='\n'||*r=='\r'||*r=='\t')) r++;
+          if (*r != ':') { s2 = r; continue; }
+          r++; while (*r && (*r==' '||*r=='\n'||*r=='\r'||*r=='\t')) r++;
+          if (*r != '[') { s2 = r; continue; }
+          /* r points at '[' of the inner array; find matching ']' */
+          const char *arr_start = r;
+          int depth = 0; const char *t = r;
+          while (*t) {
+            if (*t == '[') depth++;
+            else if (*t == ']') {
+              depth--;
+              if (depth == 0) break;
+            }
+            t++;
+          }
+          if (!*t) { s2 = r + 1; continue; }
+          /* copy content between '[' and ']' (inclusive of objects inside) */
+          size_t chunk_len = (size_t)(t - arr_start + 1);
+          /* we want the inner array elements, so skip the surrounding brackets */
+          if (chunk_len >= 2) {
+            const char *elem_start = arr_start + 1;
+            size_t elems_len = chunk_len - 2;
+            if (elems_len > 0) {
+              /* ensure capacity */
+              while (outlen + elems_len + 2 > outcap) {
+                size_t nc = outcap * 2; char *nb = realloc(out, nc); if (!nb) break; out = nb; outcap = nc;
+              }
+              if (!first_item) { out[outlen++] = ','; }
+              memcpy(out + outlen, elem_start, elems_len); outlen += elems_len;
+              first_item = 0;
+            }
+          }
+          s2 = t + 1;
+        }
+        /* close array */
+        if (outlen + 2 > outcap) { char *nb = realloc(out, outlen + 2); if (nb) { out = nb; outcap = outlen + 2; } }
+        out[outlen++] = ']'; out[outlen] = '\0';
+        /* replace norm_links with out (if we captured anything meaningful) */
+        if (outlen > 2) {
+          free(norm_links);
+          norm_links = out;
+        } else {
+          free(out);
+        }
+      }
+    }
+  }
   /* Build JSON */
   char *buf = NULL; size_t cap = 4096, len = 0; buf = malloc(cap); if (!buf) { send_json_response(r, "{\"links\":[]}\n"); goto done2; } buf[0] = 0;
   #define APP_O2(fmt,...) do { if (json_appendf(&buf, &len, &cap, fmt, ##__VA_ARGS__) != 0) { if(buf){ free(buf);} send_json_response(r,"{\"links\":[]}\n"); goto done2; } } while(0)
