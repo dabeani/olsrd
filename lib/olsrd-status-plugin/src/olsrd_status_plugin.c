@@ -6453,8 +6453,30 @@ static int h_traceroute(http_request_t *r) {
                     max_short = sizeof(hops[i].host) - suffix_len - 1; /* leave room for NUL */
                   }
                   if (max_short > 0) {
-                    /* snprintf with precision to truncate shortHost if necessary */
-                    snprintf(hops[i].host, sizeof(hops[i].host), "%.*s.%s.wien.funkfeuer.at", (int)max_short, shortHost, nodename_buf);
+                    /* Build into hops[i].host safely using bounded copies to avoid format-truncation warnings. */
+                    char *dst = hops[i].host; size_t dstcap = sizeof(hops[i].host);
+                    size_t used = 0;
+                    size_t short_len = strnlen(shortHost, max_short);
+                    if (short_len > 0) {
+                      size_t copy = short_len < (dstcap - 1) ? short_len : (dstcap - 1);
+                      memcpy(dst, shortHost, copy);
+                      used = copy;
+                    }
+                    /* add dot separator if space remains */
+                    if (used < dstcap - 1 && used > 0) { dst[used] = '.'; used++; }
+                    /* append nodename_buf */
+                    const char *p1 = nodename_buf; size_t p1len = strlen(p1);
+                    size_t space = (dstcap - 1) - used;
+                    if (space > 0) {
+                      size_t c = p1len < space ? p1len : space; memcpy(dst + used, p1, c); used += c; space = (dstcap - 1) - used;
+                    }
+                    /* append suffix ".wien.funkfeuer.at" */
+                    const char *suffix = ".wien.funkfeuer.at"; size_t suflen = strlen(suffix);
+                    if (space > 0) {
+                      size_t c2 = suflen < space ? suflen : space; memcpy(dst + used, suffix, c2); used += c2;
+                    }
+                    /* NUL-terminate */
+                    if (used >= dstcap) used = dstcap - 1; dst[used] = '\0';
                     if (hops[i].host[0]) {
                       continue; /* host set, move to next hop */
                     }
