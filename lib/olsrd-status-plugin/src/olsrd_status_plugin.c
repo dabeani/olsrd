@@ -6436,18 +6436,28 @@ static int h_traceroute(http_request_t *r) {
                 if (inet_pton(AF_INET, cleaned, &t4) == 1) is_ip_literal = 1;
                 else if (inet_pton(AF_INET6, cleaned, &t6) == 1) is_ip_literal = 1;
                 if (!is_ip_literal) {
-                  char shortHost[128]; char *dot = strchr(cleaned, '.');
+                  char shortHost[128] = ""; char *dot = strchr(cleaned, '.');
                   if (dot && dot > cleaned) {
                     size_t copy = (size_t)(dot - cleaned); if (copy >= sizeof(shortHost)) copy = sizeof(shortHost)-1;
                     memcpy(shortHost, cleaned, copy); shortHost[copy]=0;
                   } else {
-                    snprintf(shortHost, sizeof(shortHost), "%s", cleaned);
+                    /* copy up to buffer */
+                    size_t copy = strnlen(cleaned, sizeof(shortHost)-1); memcpy(shortHost, cleaned, copy); shortHost[copy]=0;
                   }
-                  char finalhost[256];
-                  int w = snprintf(finalhost, sizeof(finalhost), "%s.%s.wien.funkfeuer.at", shortHost, nodename_buf);
-                  if (w > 0 && (size_t)w < sizeof(hops[i].host)) {
-                    snprintf(hops[i].host, sizeof(hops[i].host), "%s", finalhost);
-                    continue; /* host set, move to next hop */
+                  /* Build final host directly into hops[i].host with truncation guards to avoid warnings
+                   * Format: <shortHost>.<nodename>.wien.funkfeuer.at
+                   */
+                  size_t suffix_len = 1 + strlen(nodename_buf) + sizeof(".wien.funkfeuer.at") - 1; /* dot + nodename + domain */
+                  size_t max_short = 0;
+                  if (suffix_len < sizeof(hops[i].host)) {
+                    max_short = sizeof(hops[i].host) - suffix_len - 1; /* leave room for NUL */
+                  }
+                  if (max_short > 0) {
+                    /* snprintf with precision to truncate shortHost if necessary */
+                    snprintf(hops[i].host, sizeof(hops[i].host), "%.*s.%s.wien.funkfeuer.at", (int)max_short, shortHost, nodename_buf);
+                    if (hops[i].host[0]) {
+                      continue; /* host set, move to next hop */
+                    }
                   }
                 }
               }
