@@ -4327,9 +4327,12 @@ static int h_status_lite(http_request_t *r) {
    * on compilers with -Werror or -Wunused-but-set-variable enabled. */
   (void)dropped;
     METRIC_LOAD_UNIQUE(unique_routes, unique_nodes);
-    unsigned long olsr_routes = unique_routes;
-    unsigned long olsr_nodes = unique_nodes;
-    if (olsr_routes == 0 && olsr_nodes == 0) {
+  unsigned long olsr_routes = unique_routes;
+  unsigned long olsr_nodes = unique_nodes;
+  /* If OLSRd (v1) is running prefer in-memory collectors so counters reflect
+   * the live core state. Otherwise fall back to metric atomics only when
+   * both unique route/node metrics are zero. */
+  if (lite_olsrd_on || (olsr_routes == 0 && olsr_nodes == 0)) {
       /* Build lightweight counts using in-memory collectors only (no HTTP probes).
        * We need links+routes+topology to compute per-neighbor node/route counts.
        */
