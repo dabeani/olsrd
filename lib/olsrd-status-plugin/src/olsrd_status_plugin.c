@@ -4258,6 +4258,17 @@ static int h_status_lite(http_request_t *r) {
   if (lite_olsr2_originator_raw) free(lite_olsr2_originator_raw);
   if (lite_olsr2_neighbors_raw) free(lite_olsr2_neighbors_raw);
 
+  /* Count OLSR2 nodes for statistics */
+  unsigned long olsr2_nodes = 0;
+  if (lite_olsr2_on && lite_olsr2_neighbors_raw) {
+    const char *p = lite_olsr2_neighbors_raw;
+    while (*p) {
+      if (*p == '\n') olsr2_nodes++;
+      p++;
+    }
+    if (p > lite_olsr2_neighbors_raw && *(p-1) != '\n') olsr2_nodes++;
+  }
+
   /* Also include lightweight OLSR route/node counts for the UI statistics tab */
   {
     unsigned long dropped=0, retries=0, successes=0;
@@ -4324,6 +4335,12 @@ static int h_status_lite(http_request_t *r) {
             /* Normalization failed, attempt heuristic on the combined snapshot */
             unsigned long h_nodes = 0, h_routes = 0; heuristic_count_ips_in_raw(combined, &h_nodes, &h_routes);
             if (h_nodes > 0 || h_routes > 0) { olsr_routes = h_routes; olsr_nodes = h_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes); if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: heuristic counts (no norm) nodes=%lu routes=%lu\n", h_nodes, h_routes); }
+          }
+          if (lite_olsr2_on && olsr2_nodes > olsr_nodes) {
+            olsr_nodes = olsr2_nodes;
+            olsr_routes = olsr2_nodes;
+            METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
+            if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: using OLSR2 counts nodes=%lu\n", olsr2_nodes);
           }
           if (norm) free(norm);
           free(combined);
