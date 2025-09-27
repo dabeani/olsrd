@@ -6353,11 +6353,6 @@ void lookup_hostname_cached(const char *ip, char *out, size_t outlen) {
   if (!ip || !out) return;
   out[0]=0;
   if (cache_get(g_host_cache, ip, out, outlen) && out[0]) return;
-  /* try reverse DNS using thread-safe resolver */
-  if (resolve_ip_to_hostname(ip, out, outlen) == 0) {
-    cache_set(g_host_cache, ip, out);
-    return;
-  }
   /* try cached remote node_db first */
   fetch_remote_nodedb_if_needed();
   if (!g_nodedb_cached || g_nodedb_cached_len == 0) {
@@ -6370,7 +6365,7 @@ void lookup_hostname_cached(const char *ip, char *out, size_t outlen) {
     char needle[256];
     if (snprintf(needle, sizeof(needle), "\"%s\":", ip) >= (int)sizeof(needle)) {
       /* IP address too long, skip */
-      goto nothing_found;
+      goto try_reverse_dns;
     }
     char *pos = strstr(g_nodedb_cached, needle);
     if (pos) {
@@ -6409,8 +6404,13 @@ void lookup_hostname_cached(const char *ip, char *out, size_t outlen) {
       }
     }
   }
+try_reverse_dns:
+  /* try reverse DNS using thread-safe resolver */
+  if (resolve_ip_to_hostname(ip, out, outlen) == 0) {
+    cache_set(g_host_cache, ip, out);
+    return;
+  }
   /* nothing found */
-nothing_found:
   out[0]=0;
 }
 
