@@ -6363,7 +6363,7 @@ static int cache_get(struct kv_cache_entry *cache, const char *key, char *out, s
 static void lookup_hostname_cached(const char *ip, char *out, size_t outlen) {
   if (!ip || !out) return;
   out[0]=0;
-  if (cache_get(g_host_cache, ip, out, outlen)) return;
+  if (cache_get(g_host_cache, ip, out, outlen) && out[0]) return;
   /* try reverse DNS using thread-safe resolver */
   if (resolve_ip_to_hostname(ip, out, outlen) == 0) {
     cache_set(g_host_cache, ip, out);
