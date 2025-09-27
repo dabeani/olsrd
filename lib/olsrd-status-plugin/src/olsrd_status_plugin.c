@@ -6476,7 +6476,10 @@ static int h_traceroute(http_request_t *r) {
                       size_t c2 = suflen < space ? suflen : space; memcpy(dst + used, suffix, c2); used += c2;
                     }
                     /* NUL-terminate */
-                    if (used >= dstcap) used = dstcap - 1; dst[used] = '\0';
+                    if (used >= dstcap) {
+                      used = dstcap - 1;
+                    }
+                    dst[used] = '\0';
                     if (hops[i].host[0]) {
                       continue; /* host set, move to next hop */
                     }
