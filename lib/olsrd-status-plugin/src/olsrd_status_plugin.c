@@ -5363,27 +5363,34 @@ static int h_olsr2_links(http_request_t *r) {
     return 0;
   }
   int olsr2_on=0, olsrd_on=0; detect_olsr_processes(&olsrd_on,&olsr2_on);
-  if (!olsr2_on) {
-    send_json_response(r, "{\"links\":[]}\n");
-    return 0;
-  }
-  /* Fetch OLSR2 links via telnet bridge */
+  /* Try to fetch OLSR2 links via the telnet bridge regardless of process
+   * detection. Some environments expose the telnet bridge even when
+   * process detection (ps parsing) doesn't find 'olsrd2'. Use the
+   * helper util_http_get_olsr2_local which implements small fallbacks. */
   char *links_raw = NULL; size_t links_len = 0;
-  char olsr2_url[256];
-  build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo json link");
-  if (util_http_get_url_local(olsr2_url, &links_raw, &links_len, 1) == 0 && links_raw && links_len > 0) {
-    if (g_log_buf_lines > 0) plugin_log_trace("telnet: fetched nhdpinfo json link (%zu bytes)", links_len);
-  } else {
+  if (util_http_get_olsr2_local("nhdpinfo json link", &links_raw, &links_len) != 0 || !links_raw || links_len == 0) {
+    /* nothing available */
     if (links_raw) { free(links_raw); links_raw = NULL; }
     send_json_response(r, "{\"links\":[]}\n");
     return 0;
   }
-  /* Normalize OLSR2 links - since it's already JSON, use as is */
+  if (g_log_buf_lines > 0) plugin_log_trace("telnet: fetched nhdpinfo json link (%zu bytes)", links_len);
+
+  /* Normalize OLSR2 links - accept either an array or a single object and
+   * wrap a single object into an array so the UI can consume it uniformly. */
   char *norm_links = NULL;
-  if (links_raw && links_raw[0] == '[') {
+  /* find first non-whitespace */
+  const char *p = links_raw; while (*p && (*p==' '||*p=='\n'||*p=='\r'||*p=='\t')) p++;
+  if (*p == '[') {
     norm_links = strdup(links_raw);
+  } else if (*p == '{') {
+    size_t want = strlen(links_raw) + 3; /* brackets + null */
+    norm_links = malloc(want);
+    if (norm_links) {
+      snprintf(norm_links, want, "[%s]", links_raw);
+    }
   } else {
-    // If not array, wrap in array or something, but assume it's array
+    /* Not JSON - leave as empty */
     norm_links = NULL;
   }
   /* Build JSON */
