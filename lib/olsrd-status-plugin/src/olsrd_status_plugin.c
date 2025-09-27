@@ -4361,7 +4361,21 @@ static int h_status_lite(http_request_t *r) {
           if (routes_raw && l2) { combined[off++] = '\n'; memcpy(combined + off, routes_raw, l2); off += l2; }
           if (topology_raw && l3) { combined[off++] = '\n'; memcpy(combined + off, topology_raw, l3); off += l3; }
           combined[off] = '\0';
+          /* Fast-path: if we have a raw routes snapshot, count destinations there
+           * (many olsrd setups produce a plain routes dump that is more reliable
+           * for counting destinations than the multi-stage normalization). We'll
+           * still try normalization afterwards for richer per-neighbor metrics,
+           * but prefer a positive direct count from routes_raw when available.
+           */
           char *norm = NULL; size_t nn = 0;
+          unsigned long direct_routes_count = 0;
+          if (routes_raw && l2 > 0) {
+            const char *pr = routes_raw;
+            /* count occurrences of a destination JSON key ("destination") as
+             * a fast proxy for number of routes present in the raw dump */
+            while ((pr = strstr(pr, "\"destination\"")) != NULL) { direct_routes_count++; pr++; }
+          }
+
           if ((normalize_olsrd_links(combined, &norm, &nn) == 0 && norm && nn > 0) ||
               (normalize_olsrd_links_plain(combined, &norm, &nn) == 0 && norm && nn > 0)) {
             unsigned long sum_routes = 0, sum_nodes = 0;
@@ -4373,16 +4387,39 @@ static int h_status_lite(http_request_t *r) {
             while ((p2 = strstr(p2, "\"nodes\":")) != NULL) {
               p2 += 8; while (*p2 && (*p2 == ' ' || *p2 == '"' || *p2 == '\\' || *p2 == ':' )) p2++; sum_nodes += strtoul(p2, NULL, 10);
             }
-            if (sum_routes > 0 || sum_nodes > 0) { olsr_routes = sum_routes; olsr_nodes = sum_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes); }
-            else {
+            /* If normalization produced useful counts, use them. If routes are
+             * zero but we counted a positive number from the raw routes snapshot,
+             * prefer the direct count (avoids undercounting when normalization
+             * simplifies/aggregates routes). */
+            if (sum_routes > 0 || sum_nodes > 0) {
+              olsr_routes = sum_routes;
+              olsr_nodes = sum_nodes;
+              if (olsr_routes == 0 && direct_routes_count > 0) olsr_routes = direct_routes_count;
+              METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
+            } else {
               unsigned long h_nodes = 0, h_routes = 0;
               heuristic_count_ips_in_raw(combined, &h_nodes, &h_routes);
-              if (h_nodes > 0 || h_routes > 0) { olsr_routes = h_routes; olsr_nodes = h_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes); if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: heuristic counts applied nodes=%lu routes=%lu\n", h_nodes, h_routes); }
+              /* if heuristics found something, use it; otherwise fall back to
+               * direct route count if available */
+              if (h_nodes > 0 || h_routes > 0) {
+                olsr_routes = h_routes; olsr_nodes = h_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
+                if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: heuristic counts applied nodes=%lu routes=%lu\n", h_nodes, h_routes);
+              } else if (direct_routes_count > 0) {
+                olsr_routes = direct_routes_count;
+                /* keep olsr_nodes as-is (heuristics didn't find nodes) */
+                METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
+              }
             }
           } else {
-            /* Normalization failed, attempt heuristic on the combined snapshot */
+            /* Normalization failed: prefer heuristics but fall back to direct
+             * routes count from the raw snapshot if present. */
             unsigned long h_nodes = 0, h_routes = 0; heuristic_count_ips_in_raw(combined, &h_nodes, &h_routes);
-            if (h_nodes > 0 || h_routes > 0) { olsr_routes = h_routes; olsr_nodes = h_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes); if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: heuristic counts (no norm) nodes=%lu routes=%lu\n", h_nodes, h_routes); }
+            if (h_nodes > 0 || h_routes > 0) {
+              olsr_routes = h_routes; olsr_nodes = h_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
+              if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: heuristic counts (no norm) nodes=%lu routes=%lu\n", h_nodes, h_routes);
+            } else if (direct_routes_count > 0) {
+              olsr_routes = direct_routes_count; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
+            }
           }
           /* Defensive: ensure we don't report wildly inconsistent counts. If one
            * side is zero but the other is non-zero, copy the non-zero value so
