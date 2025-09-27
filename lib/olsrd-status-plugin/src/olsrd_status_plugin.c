@@ -6397,15 +6397,20 @@ static int h_traceroute(http_request_t *r) {
           char resolved[256] = "";
           lookup_hostname_cached(hops[i].ip, resolved, sizeof(resolved));
           if (resolved[0]) {
-            /* If the resolver returns an address literal (sometimes reverse DNS is configured to return the IP string),
-             * skip it. Accept only names that contain a letter (a-z) to avoid copying numeric-only results.
-             */
-            int has_alpha = 0; for (char *c = resolved; *c; ++c) { if (isalpha((unsigned char)*c)) { has_alpha = 1; break; } }
-            if (!has_alpha) {
-              /* skip numeric reverse result */
-            } else {
-              /* limit copy to host buffer size to avoid truncation warnings */
-              snprintf(hops[i].host, sizeof(hops[i].host), "%.*s", (int)sizeof(hops[i].host) - 1, resolved);
+            /* Normalize resolved string by stripping surrounding brackets/parentheses */
+            char cleaned[256]; size_t ci=0;
+            for (size_t k=0; k<sizeof(resolved) && resolved[k]; ++k) {
+              if (resolved[k] == '[' || resolved[k] == ']' || resolved[k] == '(' || resolved[k] == ')') continue;
+              cleaned[ci++] = resolved[k]; if (ci+1 >= sizeof(cleaned)) break;
+            }
+            cleaned[ci]=0;
+            /* If resolver returned an IP literal, do not accept it as a hostname. Use inet_pton for robust detection. */
+            struct in6_addr t6; struct in_addr t4; int is_ip_literal = 0;
+            if (inet_pton(AF_INET, cleaned, &t4) == 1) is_ip_literal = 1;
+            else if (inet_pton(AF_INET6, cleaned, &t6) == 1) is_ip_literal = 1;
+            if (!is_ip_literal) {
+              /* Accept resolved hostname */
+              snprintf(hops[i].host, sizeof(hops[i].host), "%.*s", (int)sizeof(hops[i].host) - 1, cleaned);
             }
           }
         }
