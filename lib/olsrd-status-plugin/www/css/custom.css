@@ -187,6 +187,27 @@
 .info-item-compact .info-label { font-weight:600; color:#333; display:flex; align-items:center; gap:6px; }
 .info-item-compact .info-value { color:#5a5f66; max-width:360px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right; }
 
+/* General info value cell used by dynamic JS renderers */
+.info-value { text-align: right; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Compact header helpers for Versions card */
+.header-left { display:flex; flex-direction:column; font-size:13px; font-weight:600; }
+.header-right { display:flex; align-items:center; gap:10px; }
+
+/* Missing small utilities */
+.mt-20 { margin-top: 20px; }
+.pre-scroll { max-height: 300px; overflow: auto; }
+
+/* Status badges for olsr/olsr2 in the global header */
+.status-olsr-badge { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:12px; font-size:12px; font-weight:600; }
+.status-olsr-icon { display:inline-block; width:14px; height:14px; border-radius:50%; text-align:center; line-height:14px; color:#fff; font-size:11px; margin-right:6px; }
+.status-olsr-icon--missing { background:#6c757d; }
+.status-olsr-icon--running { background:#2ecc71; }
+.status-olsr-icon--stopped { background:#e74c3c; }
+.status-olsr-badge--missing { background:#ececec; color:#333; }
+.status-olsr-badge--running { background:#e6f9ee; color:#145a2b; }
+.status-olsr-badge--stopped { background:#fff0f0; color:#7a1d1d; }
+
 /* Keep compatibility for older .info-item usage but tone down spacing to match compact layout */
 .versions-container .info-item, .versions-container .info-item-compact { margin-bottom: 6px; padding: 6px 8px; border-radius:4px; background: #fbfbfb; }
 .versions-container .info-item .info-label, .versions-container .info-item-compact .info-label { font-weight:600; }
@@ -217,6 +238,103 @@
 .status-badges .badge.crit { box-shadow: 0 0 12px rgba(255,69,58,0.25); }
 
 /* Compact dropdown menu for header status (absolute positioned) */
+
+/* Panel helpers */
+.panel-heading-flex {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.panel-title { font-weight: 600; margin-bottom: 4px; }
+.panel-subtitle { font-size: 12px; color: #666; }
+.panel-header-right { display: flex; gap: 8px; align-items: center; }
+
+/* Fetch queue helpers */
+.flex-col-gap-8 { display: flex; flex-direction: column; gap: 8px; }
+.flex-gap-8 { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fetch-badge { display: inline-block; padding: 4px 6px; border-radius: 4px; background: #f0f0f0; margin-right: 6px; }
+.fetch-badge strong { margin-left: 6px; }
+.progress { height: 16px; background: #eee; border-radius: 4px; overflow: hidden; }
+.progress .progress-bar { height: 100%; }
+.w-220 { width: 220px; }
+.note-muted { color: #666; font-size: 90%; }
+
+/* Action toast visibility and fade */
+#action-toast { transition: opacity 220ms ease; opacity: 0; }
+.toast-visible { opacity: 1 !important; }
+
+/* fetch-stats container margin replacement for inline style */
+.fetch-stats-container { margin: 6px 0 12px 0; }
+
+.note-muted { margin-top: 2px; }
+
+/* clickable helper */
+.clickable { cursor: pointer; }
+
+/* Dynamic runtime style helpers: JS may inject .dyn-style-<n> classes into the document <style data-dynamic-style> element */
+
+/* Left column sizing used by fetch queue */
+.flex-left-62 { flex: 1 1 62%; }
+.col-queued { width: 55%; }
+
+/* Progress bar color variants (reuse bootstrap-like classes if absent) */
+.progress-bar-success { background-color: #5cb85c; }
+.progress-bar-warning { background-color: #f0ad4e; }
+.progress-bar-danger { background-color: #d9534f; }
+
+/* Small help under card bodies */
+.small-help { margin-top: 8px; color: #666; font-size: 12px; }
+
+/* small gap for sort mark */
+.sort-mark-gap { margin-left: 6px; }
+
+/* Runtime debug overlay styling */
+.ui-debug-overlay { position: fixed; right: 12px; top: 12px; z-index: 9999; background: rgba(0,0,0,0.7); color: #fff; padding: 8px 10px; font-size: 12px; line-height: 1.2; border-radius: 6px; max-width: 360px; font-family: monospace; white-space: pre-wrap; pointer-events: none; }
+
+/* utility classes */
+.pre-wrap { white-space: pre-wrap; }
+.mono { font-family: monospace; }
+.td-empty { padding: 12px; }
+.log-controls { display: inline-block; margin-left: 12px; }
+.page-span { margin: 0 6px; }
+
+/* Log table column sizing */
+.col-timestamp { width: 160px; }
+.col-level { width: 100px; }
+
+.td-muted { color: #666; }
+
+/* Small utility: very small font utility used in a few compact blocks */
+.fs-60 { font-size: 60% !important; }
+
+/* Row background for default routes / highlights */
+.row-default-highlight { background-color: #fff8d5; }
+
+/* Additional highlight used for notable rows */
+.row-gold-highlight { background-color: #FFD700; }
+
+.badge-default { background: #888; color: #fff; }
+.badge-primary { background: #5a9bd8; color: #fff; }
+
+/* Separator title used in fetch-queue area */
+.sep-title { margin-top: 8px; font-weight: 600; }
+
+/* Spacer used for virtualized lists. Height is controlled via CSS variable set by JS. */
+.spacer { width: 1px; height: var(--spacer-height, 0px); }
+
+/* Allow tbody to be translated by CSS variable; JS sets --translateY */
+.translate-y { transform: translateY(var(--translateY, 0px)); }
+
+/* Progress bar uses CSS variable for width to avoid ad-hoc inline width strings */
+.progress .progress-bar { width: var(--progress-width, 0%); }
+
+/* Generic position helper */
+.pos-relative { position: relative !important; }
+
+/* Display helpers */
+.d-none { display: none !important; }
+.d-block { display: block !important; }
+.d-inline-block { display: inline-block !important; }
 .status-dropdown-wrap { position:relative; }
 .status-dropdown-menu { display:none; position:absolute; right:0; top:28px; z-index:2200; background:#fff; border:1px solid #ddd; border-radius:6px; box-shadow:0 8px 18px rgba(0,0,0,0.12); }
 .status-dropdown-menu[aria-hidden="false"] { display:block; }
@@ -372,6 +490,29 @@
 .param-desc-cell { font-size:12px; color:#666; }
 /* Subgroup copy icon button - hidden in compact diagnostics view per user request */
 .diag-subcopy { display: none !important; }
+
+/* Helpers used by refactored JS to remove inline styles */
+.all-params-box { border: 1px dashed #ddd; padding: 8px; margin-top: 8px; }
+.param-all-heading { font-weight: 700; }
+.mt-6 { margin-top: 6px; }
+.mt-8 { margin-top: 8px; }
+.d-none { display: none !important; }
+.pre-wrap { white-space: pre-wrap; }
+.flex-col-gap-8 { display:flex; flex-direction:column; gap:8px; }
+.flex-col-gap-6 { display:flex; flex-direction:column; gap:6px; }
+.flex-row-gap-8 { display:flex; align-items:center; gap:8px; }
+.w-220 { width:220px; }
+.w-120 { width:120px; }
+.note-muted { color:#666; font-size:12px; }
+.mb-6 { margin-bottom:6px; }
+.list-wrap { max-height:420px; overflow:auto; display:flex; flex-direction:column; gap:6px; }
+.list-item { border:1px solid #eee; padding:6px; cursor:pointer; background:#fff; }
+.list-item-details { margin:6px 0 0 0; padding:6px; background:#f9f9f9; border:1px solid #ddd; white-space:pre-wrap; font-size:12px; }
+
+/* Log table classes to replace inline styles */
+.log-ts { color:#666; font-size:11px; }
+.log-level { font-weight:600; }
+.log-msg { white-space: pre-wrap; }
 
 /* Compact diagnostics listing style - tighter monospace one-line entries
 */
