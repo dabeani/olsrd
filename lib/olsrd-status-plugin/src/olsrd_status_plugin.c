@@ -6390,8 +6390,8 @@ static void lookup_hostname_cached(const char *ip, char *out, size_t outlen) {
       if (find_json_string_value(pos, "hostname", &vptr, &vlen)) {
         size_t copy = vlen < outlen-1 ? vlen : outlen-1; memcpy(out, vptr, copy); out[copy]=0; cache_set(g_host_cache, ip, out); return;
       }
-      /* fallback to short forms: "n", "h", or generic "host"/"name" */
-      const char *alt_keys[] = { "n", "h", "host", "name", NULL };
+      /* fallback to short forms: "d", "n", "h", or generic "host"/"name" */
+      const char *alt_keys[] = { "d", "n", "h", "host", "name", NULL };
       for (int ki = 0; alt_keys[ki]; ++ki) {
         size_t vlen2 = 0; char *vptr2 = NULL;
         if (find_json_string_value(pos, alt_keys[ki], &vptr2, &vlen2)) {
