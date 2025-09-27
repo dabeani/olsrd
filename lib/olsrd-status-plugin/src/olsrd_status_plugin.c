@@ -5157,8 +5157,9 @@ static int h_olsr_links(http_request_t *r) {
       /* try to extract originator field */
       char originator_v[128] = "";
       char *p = strstr(orig_raw, "\"originator\"");
+      if (p) p = strstr(p + 12, "\"originator\"");  // find second occurrence for the actual IP
       if (p) {
-        const char *q = strchr(p, ':'); if (q) { q++; while (*q && (*q==' '||*q=='\"')) q++; const char *e = q; while (*e && *e!='\"' && *e!=',' && *e!='}' && *e!='\n') e++; size_t L = e - q; if (L && L < sizeof(originator_v)) strncpy(originator_v, q, L);
+        const char *q = strchr(p, ':'); if (q) { q++; while (*q && (*q==' '||*q=='\"')) q++; const char *e = q; while (*e && *e!='\"' && *e!=',' && *e!='}' && *e!='\n') e++; size_t L = e - q; if (L && L < sizeof(originator_v)) { strncpy(originator_v, q, L); originator_v[L] = 0; }
         }
       } else {
         /* fallback: plain text may contain ip:port on first line */
