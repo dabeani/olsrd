@@ -6276,12 +6276,36 @@ static int h_traceroute(http_request_t *r) {
   char want_json[8] = ""; (void)get_query_param(r, "format", want_json, sizeof(want_json));
   if (!target[0]) { send_text(r, "No target provided\n"); return 0; }
   if (!g_has_traceroute || !g_traceroute_path[0]) { send_text(r, "traceroute not available\n"); return 0; }
+  /* Determine if target is IPv6 by resolving hostname if necessary */
+  int is_ipv6 = 0;
+  if (strchr(target, ':')) {
+    /* Contains ':', likely IPv6 address */
+    is_ipv6 = 1;
+  } else {
+    /* Try to resolve hostname to check address family */
+    struct addrinfo hints = {0}, *res = NULL;
+    hints.ai_family = AF_UNSPEC; /* Allow IPv4 or IPv6 */
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_NUMERICHOST; /* First try as numeric to avoid DNS if it's an IP */
+    if (getaddrinfo(target, NULL, &hints, &res) == 0) {
+      /* It's a numeric IP, check family */
+      if (res->ai_family == AF_INET6) is_ipv6 = 1;
+      freeaddrinfo(res);
+    } else {
+      /* Not numeric, resolve as hostname */
+      hints.ai_flags = 0;
+      if (getaddrinfo(target, NULL, &hints, &res) == 0) {
+        if (res->ai_family == AF_INET6) is_ipv6 = 1;
+        freeaddrinfo(res);
+      }
+      /* If resolution fails, assume IPv4 */
+    }
+  }
   /* build command dynamically to avoid compile-time truncation warnings */
   size_t cmdlen = strlen(g_traceroute_path) + 4 + strlen(target) + 32;
   char *cmd = (char*)malloc(cmdlen);
   if (!cmd) { send_text(r, "error allocating memory\n"); return 0; }
   /* conservative flags: IPv4/IPv6, numeric, wait 2s, 1 probe per hop, max 8 hops */
-  int is_ipv6 = (strchr(target, ':') != NULL);
   snprintf(cmd, cmdlen, "%s %s -n -w 2 -q 1 -m 8 %s 2>&1", g_traceroute_path, is_ipv6 ? "-6" : "-4", target);
   char *out = NULL; size_t n = 0;
   if (util_exec(cmd, &out, &n) == 0 && out) {
