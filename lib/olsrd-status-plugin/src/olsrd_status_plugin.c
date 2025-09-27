@@ -6395,7 +6395,12 @@ static int h_traceroute(http_request_t *r) {
         /* hops[i].host and hops[i].ip are fixed-size arrays; check contents, not pointer value */
         if (hops[i].host[0] == '\0' && hops[i].ip[0] != '\0') {
           char resolved[256] = "";
-          lookup_hostname_cached(hops[i].ip, resolved, sizeof(resolved));
+          /* Prefer hostname from nodedb-only lookup first. If not present, fall back to the cached resolver
+           * which may perform reverse DNS. This avoids public DNS answers when nodedb has a deliberate name.
+           */
+          if (lookup_hostname_from_nodedb(hops[i].ip, resolved, sizeof(resolved)) != 0) {
+            lookup_hostname_cached(hops[i].ip, resolved, sizeof(resolved));
+          }
           if (resolved[0]) {
             /* Normalize resolved string by stripping surrounding brackets/parentheses */
             char cleaned[256]; size_t ci=0;
@@ -6639,6 +6644,35 @@ try_reverse_dns:
   }
   /* nothing found */
   out[0]=0;
+}
+
+/* Lookup hostname only from the cached nodedb (do not perform reverse DNS).
+ * Returns 0 on success (out populated), non-zero if not found.
+ */
+static int lookup_hostname_from_nodedb(const char *ip, char *out, size_t outlen) {
+  if (!ip || !out) return -1;
+  out[0]=0;
+  fetch_remote_nodedb_if_needed();
+  if (!g_nodedb_cached || g_nodedb_cached_len == 0) return -1;
+  char needle[256];
+  if (snprintf(needle, sizeof(needle), "\"%s\":", ip) >= (int)sizeof(needle)) return -1;
+  char *pos = strstr(g_nodedb_cached, needle);
+  if (!pos) return -1;
+  /* try hostname first */
+  size_t vlen = 0; char *vptr = NULL;
+  if (find_json_string_value(pos, "hostname", &vptr, &vlen)) {
+    size_t copy = vlen < outlen-1 ? vlen : outlen-1; memcpy(out, vptr, copy); out[copy]=0; return 0;
+  }
+  /* fallback to other short keys */
+  const char *alt_keys[] = { "d", "n", "h", "host", "name", NULL };
+  for (int ki = 0; alt_keys[ki]; ++ki) {
+    size_t vlen2 = 0; char *vptr2 = NULL;
+    if (find_json_string_value(pos, alt_keys[ki], &vptr2, &vlen2)) {
+      size_t copy = vlen2 < outlen-1 ? vlen2 : outlen-1; memcpy(out, vptr2, copy); out[copy]=0; return 0;
+    }
+  }
+  /* nothing found */
+  return -1;
 }
 
 static int set_str_param(const char *value, void *data, set_plugin_parameter_addon addon __attribute__((unused))) {
