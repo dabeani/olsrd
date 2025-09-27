@@ -188,6 +188,19 @@ Expected output shape:
 
 If the endpoint is missing or traceroute is unavailable on the host, the script will print a minimal JSON response or an error; deploy the updated plugin binary and ensure `traceroute` is installed on the host for full results.
 
+Hostname resolution policy
+--------------------------
+
+The traceroute helper and the `/traceroute` JSON output prefer names from the configured node database (node_db / `nodedb.json`) before falling back to public DNS. Behavior summary:
+
+- nodedb-first: when an IP has an entry in the cached `nodedb` the plugin will use that information preferentially.
+- If the nodedb contains both a device hostname and a nodename (short node identifier), the plugin composes a FQDN in the form `hostname.nodename.wien.funkfeuer.at` for clearer operator-facing output.
+- If nodedb contains only an IP entry without a nodename, the plugin will fall back to the cached resolver (which may perform reverse DNS/public DNS lookups).
+- IP-literal PTR answers (resolving to an IP string) are ignored; the plugin treats these as non-hostnames and will prefer an empty host or the short DNS name when appropriate.
+- For readability the emitted `host` field in traceroute JSON is a short label (left-most label) unless the nodename composition rule applies.
+
+This policy keeps local node names authoritative while still allowing public DNS to provide useful names when no node_db entry is present.
+
 Add to olsrd.conf:
 ```
 LoadPlugin "lib/olsrd-status-plugin/build/olsrd_status.so.1.0"
