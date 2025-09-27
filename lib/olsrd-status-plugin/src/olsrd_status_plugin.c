@@ -4267,13 +4267,6 @@ static int h_status_lite(http_request_t *r) {
     APP_L("\"olsr2_routing\":{}");
   }
 
-  /* Free OLSR2 data */
-  if (lite_olsr2_version_raw) free(lite_olsr2_version_raw);
-  if (lite_olsr2_time_raw) free(lite_olsr2_time_raw);
-  if (lite_olsr2_originator_raw) free(lite_olsr2_originator_raw);
-  if (lite_olsr2_neighbors_raw) free(lite_olsr2_neighbors_raw);
-  if (lite_olsr2_routing_raw) free(lite_olsr2_routing_raw);
-
   /* Count OLSR2 nodes for statistics */
   unsigned long olsr2_nodes = 0;
   if (lite_olsr2_on && lite_olsr2_neighbors_raw) {
@@ -4310,9 +4303,16 @@ static int h_status_lite(http_request_t *r) {
         if (*p == '\n') olsr2_routes++;
         p++;
       }
-      if (p > lite_olsr2_neighbors_raw && *(p-1) != '\n') olsr2_routes++;
+      if (p > lite_olsr2_routing_raw && *(p-1) != '\n') olsr2_routes++;
     }
   }
+
+  /* Free OLSR2 data */
+  if (lite_olsr2_version_raw) free(lite_olsr2_version_raw);
+  if (lite_olsr2_time_raw) free(lite_olsr2_time_raw);
+  if (lite_olsr2_originator_raw) free(lite_olsr2_originator_raw);
+  if (lite_olsr2_neighbors_raw) free(lite_olsr2_neighbors_raw);
+  if (lite_olsr2_routing_raw) free(lite_olsr2_routing_raw);
 
   /* Also include lightweight OLSR route/node counts for the UI statistics tab */
   {
