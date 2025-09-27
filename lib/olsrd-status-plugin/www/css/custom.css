@@ -170,6 +170,25 @@
 #global-versions-header .panel.panel-default { margin:0; border-radius:6px; }
 #global-versions-header .panel-body { padding:4px 8px; }
 #global-versions-header .status-badges { gap:6px; }
+
+/* Compact info-item style: denser left/right rows used for versions and other cards */
+.info-item-compact {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  background: #fbfbfb;
+  font-size: 13px;
+}
+.info-item-compact .info-label { font-weight:600; color:#333; display:flex; align-items:center; gap:6px; }
+.info-item-compact .info-value { color:#5a5f66; max-width:360px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right; }
+
+/* Keep compatibility for older .info-item usage but tone down spacing to match compact layout */
+.versions-container .info-item, .versions-container .info-item-compact { margin-bottom: 6px; padding: 6px 8px; border-radius:4px; background: #fbfbfb; }
+.versions-container .info-item .info-label, .versions-container .info-item-compact .info-label { font-weight:600; }
+.versions-container .info-item .info-value, .versions-container .info-item-compact .info-value { color:#5a5f66; }
 #global-versions-header .status-olsr-badge { font-size:12px; padding:3px 8px; border-radius:10px; }
 #global-versions-header .status-olsr-badge span { display:inline-block; }
 #global-versions-header .status-olsr-badge span:first-child { width:14px; height:14px; line-height:14px; text-align:center; border-radius:50%; margin-right:6px; }
