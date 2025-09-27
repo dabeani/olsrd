@@ -3154,7 +3154,7 @@ static int util_http_get_olsr2_local(const char *command, char **out, size_t *ou
 
   /* Simple fallback: if asking for nhdpinfo link, try nhdpinfo neighbor */
   if (strstr(command, "nhdpinfo json link") != NULL) {
-    build_olsr2_url(url, sizeof(url), "nhdpinfo/json/neighbor");
+    build_olsr2_url(url, sizeof(url), "nhdpinfo json neighbor");
     if (util_http_get_url_local(url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0 && !is_html_error(tmp, tlen)) {
       *out = tmp; *out_n = tlen; return 0;
     }
@@ -4966,12 +4966,12 @@ static int h_olsr_links(http_request_t *r) {
   if (olsr2_on && (!neighbors_raw || nnr == 0)) {
     char *tmp = NULL; size_t tlen = 0;
     char olsr2_url[256];
-    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo/json/link");
+    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo json link");
     if (util_http_get_url_local(olsr2_url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
       neighbors_raw = tmp; nnr = tlen;
     } else { if (tmp) { free(tmp); tmp = NULL; tlen = 0; } }
     if ((!neighbors_raw || nnr == 0)) {
-      build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo/json/neighbor");
+      build_olsr2_url(olsr2_url, sizeof(olsr2_url), "nhdpinfo json neighbor");
       if (util_http_get_url_local(olsr2_url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0) {
         neighbors_raw = tmp; nnr = tlen;
       } else { if (tmp) { free(tmp); tmp = NULL; tlen = 0; } }
@@ -5039,7 +5039,7 @@ static int h_olsr_links(http_request_t *r) {
     char *orig_raw = NULL; size_t orig_n = 0;
     /* prefer JSON originator endpoint when available */
     char olsr2_url[256];
-    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info/json/originator");
+    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json originator");
     if (util_http_get_url_local(olsr2_url, &orig_raw, &orig_n, 1) == 0 && orig_raw && orig_n>0) {
   if (g_log_buf_lines > 0) plugin_log_trace("telnet: fetched olsrv2info originator (%zu bytes)", orig_n);
       /* try to extract originator field */
@@ -7744,7 +7744,7 @@ static int h_versions_json(http_request_t *r) {
   if (olsr2_on) {
     char *orig_raw = NULL; size_t orig_n = 0;
     char olsr2_url[256];
-    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info/json/originator");
+    build_olsr2_url(olsr2_url, sizeof(olsr2_url), "olsrv2info json originator");
     if (util_http_get_url_local(olsr2_url, &orig_raw, &orig_n, 1) == 0 && orig_raw && orig_n>0) {
       /* take first line that contains ':' */
       char *nl = strchr(orig_raw,'\n'); if (nl) *nl = 0; if (strchr(orig_raw,':')) strncpy(originator, orig_raw, sizeof(originator)-1);
