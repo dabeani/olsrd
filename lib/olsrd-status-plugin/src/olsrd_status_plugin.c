@@ -3133,7 +3133,7 @@ static void build_olsr2_url(char *buf, size_t bufsize, const char *command) {
 
 /* Build OLSRd jsoninfo URL with configurable port */
 static void build_olsrd_url(char *buf, size_t bufsize, const char *endpoint) {
-  snprintf(buf, bufsize, "http://127.0.0.1:%d/telnet/%s", g_olsrd_jsoninfo_port, endpoint);
+  snprintf(buf, bufsize, "http://127.0.0.1:%d/%s", g_olsrd_jsoninfo_port, endpoint);
 }
 
 /* Detect simple HTML/HTTP error responses so we don't embed them into JSON
