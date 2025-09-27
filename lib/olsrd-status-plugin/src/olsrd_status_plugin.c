@@ -4192,6 +4192,7 @@ static int h_status_lite(http_request_t *r) {
   char *lite_olsr2_time_raw = NULL; size_t lite_olsr2_time_n = 0;
   char *lite_olsr2_originator_raw = NULL; size_t lite_olsr2_originator_n = 0;
   char *lite_olsr2_neighbors_raw = NULL; size_t lite_olsr2_neighbors_n = 0;
+  char *lite_olsr2_routing_raw = NULL; size_t lite_olsr2_routing_n = 0;
 
   if (lite_olsr2_on) {
   /* olsr2_url not needed here; util_http_get_olsr2_local builds URLs */
@@ -4206,6 +4207,9 @@ static int h_status_lite(http_request_t *r) {
 
     /* Get OLSR2 neighbors */
   if (util_http_get_olsr2_local("nhdpinfo json link", &lite_olsr2_neighbors_raw, &lite_olsr2_neighbors_n) != 0) { lite_olsr2_neighbors_raw = NULL; lite_olsr2_neighbors_n = 0; }
+
+    /* Get OLSR2 routing */
+  if (util_http_get_olsr2_local("olsrv2info json routing", &lite_olsr2_routing_raw, &lite_olsr2_routing_n) != 0) { lite_olsr2_routing_raw = NULL; lite_olsr2_routing_n = 0; }
   }
 
   if (lite_olsr2_version_raw && lite_olsr2_version_n > 0) {
@@ -4251,12 +4255,24 @@ static int h_status_lite(http_request_t *r) {
   } else {
     APP_L("\"olsr2_neighbors\":{}");
   }
+  APP_L(",");
+
+  if (lite_olsr2_routing_raw && lite_olsr2_routing_n > 0) {
+    if (is_probably_json(lite_olsr2_routing_raw, lite_olsr2_routing_n)) {
+      APP_L("\"olsr2_routing\":%s", lite_olsr2_routing_raw);
+    } else {
+      APP_L("\"olsr2_routing\":"); json_append_escaped(&buf,&len,&cap,lite_olsr2_routing_raw); APP_L("");
+    }
+  } else {
+    APP_L("\"olsr2_routing\":{}");
+  }
 
   /* Free OLSR2 data */
   if (lite_olsr2_version_raw) free(lite_olsr2_version_raw);
   if (lite_olsr2_time_raw) free(lite_olsr2_time_raw);
   if (lite_olsr2_originator_raw) free(lite_olsr2_originator_raw);
   if (lite_olsr2_neighbors_raw) free(lite_olsr2_neighbors_raw);
+  if (lite_olsr2_routing_raw) free(lite_olsr2_routing_raw);
 
   /* Count OLSR2 nodes for statistics */
   unsigned long olsr2_nodes = 0;
@@ -4267,6 +4283,35 @@ static int h_status_lite(http_request_t *r) {
       p++;
     }
     if (p > lite_olsr2_neighbors_raw && *(p-1) != '\n') olsr2_nodes++;
+  }
+
+  /* Count OLSR2 routes for statistics */
+  unsigned long olsr2_routes = 0;
+  if (lite_olsr2_on && lite_olsr2_routing_raw) {
+    if (is_probably_json(lite_olsr2_routing_raw, lite_olsr2_routing_n)) {
+      // Assume it's {"routing": [ {route1}, {route2}, ... ] }
+      const char *p = strstr(lite_olsr2_routing_raw, "\"routing\":");
+      if (p) {
+        p += 10; // skip "routing":
+        while (*p && *p != '[') p++;
+        if (*p == '[') p++;
+        int depth = 1;
+        while (*p && depth > 0) {
+          if (*p == '{') { if (depth == 1) olsr2_routes++; depth++; }
+          else if (*p == '}') depth--;
+          else if (*p == ']') { if (depth == 1) break; }
+          p++;
+        }
+      }
+    } else {
+      // Escaped, count lines
+      const char *p = lite_olsr2_routing_raw;
+      while (*p) {
+        if (*p == '\n') olsr2_routes++;
+        p++;
+      }
+      if (p > lite_olsr2_neighbors_raw && *(p-1) != '\n') olsr2_routes++;
+    }
   }
 
   /* Also include lightweight OLSR route/node counts for the UI statistics tab */
@@ -4338,9 +4383,9 @@ static int h_status_lite(http_request_t *r) {
           }
           if (lite_olsr2_on && olsr2_nodes > olsr_nodes) {
             olsr_nodes = olsr2_nodes;
-            olsr_routes = olsr2_nodes;
+            olsr_routes = olsr2_routes;
             METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
-            if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: using OLSR2 counts nodes=%lu\n", olsr2_nodes);
+            if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: using OLSR2 counts nodes=%lu routes=%lu\n", olsr2_nodes, olsr2_routes);
           }
           if (norm) free(norm);
           free(combined);
