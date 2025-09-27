@@ -6347,14 +6347,38 @@ static int h_traceroute(http_request_t *r) {
         /* attempt parentheses ip */
         char *paren = strchr(p2,'(');
         if(paren){ char *close=strchr(paren,')'); if(close){ size_t ilen=(size_t)(close-(paren+1)); if(ilen && ilen<sizeof(ip)){ memcpy(ip,paren+1,ilen); ip[ilen]=0; } } }
-        /* host: token after hop that is not '(' and not numeric ip */
+        /* host: token after hop that is not '(' and not numeric ip
+         * Improve detection for IPv6 (contains ':' and hex digits) and
+         * handle bracketed forms like "(2001:db8::1)" or hostnames followed by
+         * an IP in parentheses. If we detect an IPv6 token, assign it to ip
+         * and clear host so hostname resolution isn't attempted later.
+         */
         {
           char tmp[256]; snprintf(tmp,sizeof(tmp),"%s",p2);
-          char *toksave=NULL; char *tok=strtok_r(tmp," \t",&toksave); while(tok){ if(tok[0]=='('){ tok=strtok_r(NULL," \t",&toksave); continue; } if(strcmp(tok,"*")==0){ tok=strtok_r(NULL," \t",&toksave); continue; } if(!host[0]){ snprintf(host,sizeof(host),"%s",tok); } tok=strtok_r(NULL," \t",&toksave); }
-          /* if host looks like ip and ip empty -> ip=host */
+          char *toksave=NULL; char *tok=strtok_r(tmp," \t",&toksave);
+          while(tok){
+            if(tok[0]=='('){ tok=strtok_r(NULL," \t",&toksave); continue; }
+            if(strcmp(tok,"*")==0){ tok=strtok_r(NULL," \t",&toksave); continue; }
+            if(!host[0]){ snprintf(host,sizeof(host),"%s",tok); }
+            tok=strtok_r(NULL," \t",&toksave);
+          }
+          /* normalize bracketed IPv6 addresses like [2001:..] or (2001:..)
+           * and detect IPv6 by presence of ':' character. If host looks like
+           * an IPv6 address, move it to ip and clear host. Also accept
+           * dotted IPv4 addresses as ip when appropriate.
+           */
           if(!ip[0] && host[0]){
-            int is_ip=1; for(char *c=host; *c; ++c){ if(!isdigit((unsigned char)*c) && *c!='.') { is_ip=0; break; } }
-            if(is_ip){ size_t host_len_copy = strnlen(host, sizeof(ip)-1); memcpy(ip, host, host_len_copy); ip[host_len_copy]=0; host[0]=0; }
+            /* strip surrounding brackets or parentheses */
+            char cleaned[256]; size_t ci=0; for(size_t i=0;i<sizeof(host) && host[i];++i){ if(host[i]!='[' && host[i]!=']' && host[i]!='(' && host[i]!=')') { cleaned[ci++]=host[i]; if(ci+1>=sizeof(cleaned)) break; } } cleaned[ci]=0;
+            int looks_ipv6 = (strchr(cleaned, ':') != NULL);
+            if (looks_ipv6) {
+              /* copy cleaned IPv6 into ip and clear host */
+              size_t copy = strnlen(cleaned, sizeof(ip)-1); memcpy(ip, cleaned, copy); ip[copy]=0; host[0]=0;
+            } else {
+              /* detect IPv4 dotted quad */
+              int is_ipv4 = 1; for(char *c = cleaned; *c; ++c) { if(!isdigit((unsigned char)*c) && *c!='.') { is_ipv4 = 0; break; } }
+              if (is_ipv4) { size_t copy = strnlen(cleaned, sizeof(ip)-1); memcpy(ip, cleaned, copy); ip[copy]=0; host[0]=0; }
+            }
           }
         }
         /* collect all latency samples (numbers followed by ms) */
