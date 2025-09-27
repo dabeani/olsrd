@@ -6400,17 +6400,58 @@ static int h_traceroute(http_request_t *r) {
           /* Prefer hostname from nodedb-only lookup first. If not present, fall back to the cached resolver
            * which may perform reverse DNS. This avoids public DNS answers when nodedb has a deliberate name.
            */
-          if (lookup_hostname_from_nodedb(hops[i].ip, resolved, sizeof(resolved)) != 0) {
-            lookup_hostname_cached(hops[i].ip, resolved, sizeof(resolved));
-          }
-          if (resolved[0]) {
-            /* Normalize resolved string by stripping surrounding brackets/parentheses */
-            char cleaned[256]; size_t ci=0;
-            for (size_t k=0; k<sizeof(resolved) && resolved[k]; ++k) {
-              if (resolved[k] == '[' || resolved[k] == ']' || resolved[k] == '(' || resolved[k] == ')') continue;
-              cleaned[ci++] = resolved[k]; if (ci+1 >= sizeof(cleaned)) break;
+            if (lookup_hostname_from_nodedb(hops[i].ip, resolved, sizeof(resolved)) != 0) {
+              /* not present in nodedb-only lookup: fall back to cached resolver (may do reverse DNS/public)
+               * Note: we will only accept nodedb-derived hostnames if we can also determine a node name
+               * so that we can build hostname.nodename.wien.funkfeuer.at. If nodedb has no nodename for
+               * this IP, prefer public DNS via lookup_hostname_cached below.
+               */
+              lookup_hostname_cached(hops[i].ip, resolved, sizeof(resolved));
             }
-            cleaned[ci]=0;
+            if (resolved[0]) {
+              /* If this result came from nodedb and there's an associated nodename, build
+               * hostname.nodename.wien.funkfeuer.at. Otherwise accept public DNS result.
+               */
+              char nodename_buf[128] = "";
+              /* try to discover a nodename (CIDR-aware) for this IP from cached nodedb */
+              pthread_mutex_lock(&g_nodedb_lock);
+              if (g_nodedb_cached && g_nodedb_cached_len > 0) {
+                find_best_nodename_in_nodedb(g_nodedb_cached, g_nodedb_cached_len, hops[i].ip, nodename_buf, sizeof(nodename_buf));
+              }
+              pthread_mutex_unlock(&g_nodedb_lock);
+              /* normalize resolved string by stripping surrounding brackets/parentheses */
+              char cleaned[256]; size_t ci=0;
+              for (size_t k=0; k<sizeof(resolved) && resolved[k]; ++k) {
+                if (resolved[k] == '[' || resolved[k] == ']' || resolved[k] == '(' || resolved[k] == ')') continue;
+                cleaned[ci++] = resolved[k]; if (ci+1 >= sizeof(cleaned)) break;
+              }
+              cleaned[ci]=0;
+              /* If we have a nodename, prefer to construct <shortHost>.<nodename>.wien.funkfeuer.at
+               * where <shortHost> is the left-most label of cleaned (or cleaned itself if no dot).
+               * If no nodename was found, fall back to accepting the resolver value as before.
+               */
+              if (nodename_buf[0]) {
+                /* if cleaned looks like an IP literal, skip building FQDN and fall back to public DNS below */
+                struct in6_addr t6; struct in_addr t4; int is_ip_literal = 0;
+                if (inet_pton(AF_INET, cleaned, &t4) == 1) is_ip_literal = 1;
+                else if (inet_pton(AF_INET6, cleaned, &t6) == 1) is_ip_literal = 1;
+                if (!is_ip_literal) {
+                  char shortHost[128]; char *dot = strchr(cleaned, '.');
+                  if (dot && dot > cleaned) {
+                    size_t copy = (size_t)(dot - cleaned); if (copy >= sizeof(shortHost)) copy = sizeof(shortHost)-1;
+                    memcpy(shortHost, cleaned, copy); shortHost[copy]=0;
+                  } else {
+                    snprintf(shortHost, sizeof(shortHost), "%s", cleaned);
+                  }
+                  char finalhost[256];
+                  int w = snprintf(finalhost, sizeof(finalhost), "%s.%s.wien.funkfeuer.at", shortHost, nodename_buf);
+                  if (w > 0 && (size_t)w < sizeof(hops[i].host)) {
+                    snprintf(hops[i].host, sizeof(hops[i].host), "%s", finalhost);
+                    continue; /* host set, move to next hop */
+                  }
+                }
+              }
+              /* If we reached here and nodename wasn't used, fall back to existing public resolver acceptance below */
             /* If resolver returned an IP literal, do not accept it as a hostname. Use inet_pton for robust detection. */
             struct in6_addr t6; struct in_addr t4; int is_ip_literal = 0;
             if (inet_pton(AF_INET, cleaned, &t4) == 1) is_ip_literal = 1;
