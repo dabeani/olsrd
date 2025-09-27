@@ -5400,9 +5400,8 @@ static int h_olsr2_links(http_request_t *r) {
    * single top-level JSON array so the UI sees an array of link objects.
    */
   if (norm_links) {
-    const char *needle1 = "\"link\"\s*:\s*\["; /* regex-like hint for humans */
-    /* Simple scan for the substring '"link":[' (ignoring whitespace) */
-    const char *scan = norm_links;
+  /* Simple scan for the substring '"link":[' (ignoring whitespace) */
+  const char *scan = norm_links;
     int found_any = 0;
     /* We'll build a combined array only if nested arrays are found */
     /* Search for sequences of '"link"' followed by ':' then '[' */
@@ -5410,15 +5409,15 @@ static int h_olsr2_links(http_request_t *r) {
       const char *q = strstr(scan, "\"link\"");
       if (!q) break;
       /* move past "link" */
-      const char *r = q + 6;
-      /* skip whitespace */
-      while (*r && (*r==' '||*r=='\n'||*r=='\r'||*r=='\t')) r++;
-      if (*r != ':') { scan = r; continue; }
-      r++; while (*r && (*r==' '||*r=='\n'||*r=='\r'||*r=='\t')) r++;
-      if (*r != '[') { scan = r; continue; }
+      const char *rp = q + 6;
+  /* skip whitespace */
+  while (*rp && (*rp==' '||*rp=='\n'||*rp=='\r'||*rp=='\t')) rp++;
+  if (*rp != ':') { scan = rp; continue; }
+  rp++; while (*rp && (*rp==' '||*rp=='\n'||*rp=='\r'||*rp=='\t')) rp++;
+  if (*rp != '[') { scan = rp; continue; }
       found_any = 1; break;
     }
-    if (found_any) {
+  if (found_any) {
       /* Extract all bracketed arrays following occurrences of "link":[ ... ] */
       size_t outcap = 4096; size_t outlen = 0; char *out = malloc(outcap);
       if (out) {
@@ -5426,14 +5425,14 @@ static int h_olsr2_links(http_request_t *r) {
         const char *s2 = norm_links;
         int first_item = 1;
         while ((s2 = strstr(s2, "\"link\"")) != NULL) {
-          const char *r = s2 + 6;
-          while (*r && (*r==' '||*r=='\n'||*r=='\r'||*r=='\t')) r++;
-          if (*r != ':') { s2 = r; continue; }
-          r++; while (*r && (*r==' '||*r=='\n'||*r=='\r'||*r=='\t')) r++;
-          if (*r != '[') { s2 = r; continue; }
-          /* r points at '[' of the inner array; find matching ']' */
-          const char *arr_start = r;
-          int depth = 0; const char *t = r;
+          const char *rq = s2 + 6;
+          while (*rq && (*rq==' '||*rq=='\n'||*rq=='\r'||*rq=='\t')) rq++;
+          if (*rq != ':') { s2 = rq; continue; }
+          rq++; while (*rq && (*rq==' '||*rq=='\n'||*rq=='\r'||*rq=='\t')) rq++;
+          if (*rq != '[') { s2 = rq; continue; }
+          /* rq points at '[' of the inner array; find matching ']' */
+          const char *arr_start = rq;
+          int depth = 0; const char *t = rq;
           while (*t) {
             if (*t == '[') depth++;
             else if (*t == ']') {
@@ -5442,7 +5441,7 @@ static int h_olsr2_links(http_request_t *r) {
             }
             t++;
           }
-          if (!*t) { s2 = r + 1; continue; }
+          if (!*t) { s2 = rq + 1; continue; }
           /* copy content between '[' and ']' (inclusive of objects inside) */
           size_t chunk_len = (size_t)(t - arr_start + 1);
           /* we want the inner array elements, so skip the surrounding brackets */
