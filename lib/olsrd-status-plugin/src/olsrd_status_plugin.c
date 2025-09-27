@@ -3331,8 +3331,32 @@ static int h_status(http_request_t *r) {
     /* Get IPv6 default route */
     char *r6 = NULL; size_t r6n = 0;
     if (util_exec("/sbin/ip -6 route show default 2>/dev/null || /usr/sbin/ip -6 route show default 2>/dev/null || ip -6 route show default 2>/dev/null", &r6, &r6n) == 0 && r6) {
-      char *p = strstr(r6, "via "); if (p) { p += 4; char *q = strchr(p, ' '); if (q) { size_t L = q - p; if (L < sizeof(def6_ip_olsr2)) { strncpy(def6_ip_olsr2, p, L); def6_ip_olsr2[L] = 0; } } }
-      p = strstr(r6, " dev "); if (p) { p += 5; char *q = strchr(p, ' '); if (!q) q = strchr(p, '\n'); if (q) { size_t L = q - p; if (L < sizeof(def6_dev_olsr2)) { strncpy(def6_dev_olsr2, p, L); def6_dev_olsr2[L] = 0; } } }
+      char *via_p = strstr(r6, "via ");
+      char *dev_p = strstr(r6, " dev ");
+      if (via_p) {
+        via_p += 4;
+        char *end = strchr(via_p, ' ');
+        if (!end) end = strchr(via_p, '\n');
+        if (end) {
+          size_t L = end - via_p;
+          if (L < sizeof(def6_ip_olsr2)) {
+            strncpy(def6_ip_olsr2, via_p, L);
+            def6_ip_olsr2[L] = 0;
+          }
+        }
+      }
+      if (dev_p) {
+        dev_p += 5;
+        char *end = strchr(dev_p, ' ');
+        if (!end) end = strchr(dev_p, '\n');
+        if (end) {
+          size_t L = end - dev_p;
+          if (L < sizeof(def6_dev_olsr2)) {
+            strncpy(def6_dev_olsr2, dev_p, L);
+            def6_dev_olsr2[L] = 0;
+          }
+        }
+      }
       free(r6);
     }
   }
