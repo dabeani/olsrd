@@ -6409,8 +6409,16 @@ static int h_traceroute(http_request_t *r) {
             if (inet_pton(AF_INET, cleaned, &t4) == 1) is_ip_literal = 1;
             else if (inet_pton(AF_INET6, cleaned, &t6) == 1) is_ip_literal = 1;
             if (!is_ip_literal) {
-              /* Accept resolved hostname */
-              snprintf(hops[i].host, sizeof(hops[i].host), "%.*s", (int)sizeof(hops[i].host) - 1, cleaned);
+              /* Accept resolved hostname, but prefer a short name (left-most label) for brevity */
+              char *dot = strchr(cleaned, '.');
+              if (dot && dot > cleaned) {
+                size_t copy = (size_t)(dot - cleaned);
+                if (copy >= sizeof(hops[i].host)) copy = sizeof(hops[i].host) - 1;
+                memcpy(hops[i].host, cleaned, copy);
+                hops[i].host[copy] = '\0';
+              } else {
+                snprintf(hops[i].host, sizeof(hops[i].host), "%.*s", (int)sizeof(hops[i].host) - 1, cleaned);
+              }
             }
           }
         }
