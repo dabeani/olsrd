@@ -143,49 +143,49 @@
             <li role="presentation"><a href="#tab-traceroute"><span class="glyphicon glyphicon-road" aria-hidden="true"></span> Traceroute</a></li>
             <li role="presentation"><a href="#tab-log"><span class="glyphicon glyphicon-list" aria-hidden="true"></span> Log</a></li>
             <li role="presentation"><a href="#tab-contact"><span class="glyphicon glyphicon-user" aria-hidden="true"></span> Kontakt</a></li>
-            <li role="presentation" id="tab-admin-link" style="display:none"><a href="#tab-admin"><span class="glyphicon glyphicon-lock" aria-hidden="true"></span> Admin</a></li>
+            <li role="presentation" id="tab-admin-link" class="d-none"><a href="#tab-admin"><span class="glyphicon glyphicon-lock" aria-hidden="true"></span> Admin</a></li>
           </ul>
         </aside>
 
-        <main class="col-sm-9 content" style="margin-top:8px;">
-          <div class="tab-content" style="margin-top:0">
+        <main class="col-sm-9 content">
+          <div class="tab-content">
         <!-- Status -->
         <div id="tab-status" class="tab-pane active">
-          <div id="status-card" class="panel panel-default" style="padding:10px; margin-bottom:10px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+          <div id="status-card" class="panel panel-default status-card">
+            <div class="header-row">
               <div>
-                <div style="font-weight:700"><span id="status-hostname">-</span></div>
+                <div class="bold-title"><span id="status-hostname">-</span></div>
                 <div class="small-muted" id="status-host-ip">-</div>
               </div>
-              <div style="text-align:right">
+              <div class="right-column">
                 <div>Uptime: <span id="status-uptime">-</span></div>
                 <div>Links: <span id="olsr-links-count">-</span></div>
               </div>
             </div>
-            <div id="links-live-controls" style="margin-top:8px; display:flex; gap:8px; align-items:center; justify-content:flex-end;">
-              <label style="display:flex; align-items:center; gap:6px; font-size:0.9em; color:#333;"><input type="checkbox" id="links-live-enable"> Live links</label>
-              <label style="display:flex; align-items:center; gap:6px; font-size:0.9em; color:#333;">Interval:<input id="links-live-interval" type="number" min="1" value="10" style="width:60px; margin-left:4px;">s</label>
+            <div id="links-live-controls">
+              <label class="inline-label"><input type="checkbox" id="links-live-enable"> Live links</label>
+              <label class="inline-label">Interval:<input id="links-live-interval" type="number" min="1" value="10" class="input-interval">s</label>
             </div>
           </div>
           <!-- Styled info block (match Versions tab style) -->
-          <div class="versions-container" style="margin-bottom:12px;">
-            <div class="info-item" style="display:flex; justify-content:space-between; align-items:center;">
-              <div style="flex:1;">
+          <div class="versions-container">
+            <div class="info-item-compact">
+              <div class="flex-1">
                 <div class="info-label"><span class="glyphicon glyphicon-time" aria-hidden="true"></span> System Uptime</div>
                 <div class="info-value"><span id="dl-uptime">-</span></div>
               </div>
-              <div style="width:220px; text-align:right; margin-left:12px;">
+              <div class="info-right">
                 <div class="info-label"><span class="glyphicon glyphicon-time" aria-hidden="true"></span> Last Updated</div>
                 <div class="info-value"><span id="last-updated">-</span></div>
               </div>
             </div>
 
-            <div class="info-item" style="display:flex; justify-content:space-between; align-items:center;">
-              <div style="flex:1;">
+            <div class="info-item-compact">
+              <div class="flex-1">
                 <div class="info-label"><span class="glyphicon glyphicon-transfer" aria-hidden="true"></span> IPv4 Default-Route</div>
                 <div class="info-value"><span id="dl-default-route"><span id="default-route">n/a</span></span></div>
               </div>
-              <div style="width:220px; text-align:right; margin-left:12px;">
+              <div class="info-right">
                 <div class="info-label"><span class="glyphicon glyphicon-signal" aria-hidden="true"></span> Versions</div>
                 <div class="info-value"><span id="status-versions-string">&nbsp;</span></div>
               </div>
@@ -216,18 +216,18 @@
         </div>
 
         <!-- Diagnostics modal (opened from footer diagnostics button) -->
-        <div id="diagnostics-modal" class="modal" style="display:none; position:fixed; left:0; right:0; bottom:0; top:0; background:rgba(0,0,0,0.4); z-index:9999;">
-          <div style="position:absolute; left:10%; right:10%; top:10%; bottom:10%; background:#fff; border-radius:6px; overflow:auto; padding:12px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-              <h4 style="margin:0">Diagnostics</h4>
+        <div id="diagnostics-modal" class="modal modal-overlay" aria-hidden="true">
+          <div class="modal-panel modal-panel-sm modal-body-scroll" role="dialog" aria-modal="true">
+            <div class="flex-between">
+              <h4 class="modal-title">Diagnostics</h4>
               <button id="diag-close" class="btn btn-default btn-sm">Close</button>
             </div>
-            <div style="display:flex; gap:8px; margin-bottom:8px;">
+            <div class="flex-gap-8">
               <button class="btn btn-default btn-sm diag-nav" data-page="params">Parameters</button>
               <button class="btn btn-default btn-sm diag-nav" data-page="intervals">Intervals</button>
               <button class="btn btn-default btn-sm diag-nav" data-page="logging">Logging</button>
             </div>
-            <div id="diag-content" style="min-height:200px; font-size:0.9em;"></div>
+            <div id="diag-content" class="diag-content modal-pre"></div>
           </div>
         </div>
 
@@ -397,81 +397,81 @@
         <!-- Simple Modal for Route Details -->
         <div id="route-modal" class="modal-overlay" aria-hidden="true">
           <div class="modal-panel">
-            <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:space-between; align-items:center; margin-bottom:10px;">
-              <div style="display:flex; align-items:center; gap:12px;">
-                <h4 id="route-modal-title" style="margin:0; font-weight:600;">Routes</h4>
-                <span id="route-modal-count" class="label label-primary" style="display:none"></span>
+            <div class="modal-row">
+              <div class="modal-row-left">
+                <h4 id="route-modal-title" class="modal-title">Routes</h4>
+                <span id="route-modal-count" class="label label-primary d-none"></span>
               </div>
-              <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
-                <input id="route-filter" type="text" class="form-control input-sm" placeholder="Filter (prefix, dev, metric)" style="width:220px;">
+              <div class="modal-row-right">
+                <input id="route-filter" type="text" class="form-control input-sm input-wide-220" placeholder="Filter (prefix, dev, metric)">
                 <button id="route-copy" type="button" class="btn btn-xs btn-default" title="Copy visible routes"><span class="glyphicon glyphicon-copy" aria-hidden="true"></span></button>
                 <button id="route-modal-close" type="button" class="btn btn-xs btn-default">Close</button>
               </div>
             </div>
-            <div style="border:1px solid #ddd; border-radius:4px; max-height:420px; overflow:auto;">
-              <table id="route-modal-table" class="table table-condensed table-striped" style="margin:0; font-size:12px;">
-                <thead style="position:sticky; top:0; background:#fafafa;">
+            <div class="modal-table-wrap">
+              <table id="route-modal-table" class="table table-condensed table-striped">
+                <thead>
                   <tr>
-                    <th style="width:45%; cursor:pointer;" data-key="destination">Destination <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
-                    <th style="width:20%; cursor:pointer;" data-key="device">Device <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
-                    <th style="width:15%; cursor:pointer;" data-key="metric">Metric <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
-                    <th style="width:20%;">Raw</th>
+                    <th data-key="destination">Destination <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
+                    <th data-key="device">Device <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
+                    <th data-key="metric">Metric <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
+                    <th>Raw</th>
                   </tr>
                 </thead>
                 <tbody id="route-modal-tbody"><tr><td colspan="4" class="text-muted">Loading...</td></tr></tbody>
               </table>
             </div>
-            <div style="margin-top:8px; font-size:11px; color:#666; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+            <div class="modal-row-info">
               <div>Click a column header to sort (coming soon) • Filter supports simple substring match.</div>
               <div></div>
             </div>
-            <pre id="route-modal-body" style="display:none; margin-top:10px; font-family:monospace; font-size:11px; max-height:320px; overflow:auto; background:#fcfcfc; border:1px solid #eee; padding:8px;"></pre>
+            <pre id="route-modal-body" class="route-modal-body-pre"></pre>
           </div>
         </div>
 
           <!-- Simple Modal for Node Details -->
           <div id="node-modal" class="modal-overlay" aria-hidden="true">
             <div class="modal-panel">
-              <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                <div style="display:flex; align-items:center; gap:12px;">
-                  <h4 id="node-modal-title" style="margin:0; font-weight:600;">Nodes</h4>
-                  <span id="node-modal-count" class="label label-primary" style="display:none"></span>
+              <div class="modal-row">
+                <div class="modal-row-left">
+                  <h4 id="node-modal-title" class="modal-title">Nodes</h4>
+                  <span id="node-modal-count" class="label label-primary d-none"></span>
                 </div>
-                <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
-                  <input id="node-filter" type="text" class="form-control input-sm" placeholder="Filter (name, ip, device)" style="width:220px;">
+                <div class="modal-row-right">
+                  <input id="node-filter" type="text" class="form-control input-sm input-wide-220" placeholder="Filter (name, ip, device)">
                   <button id="node-copy" type="button" class="btn btn-xs btn-default" title="Copy visible nodes"><span class="glyphicon glyphicon-copy" aria-hidden="true"></span></button>
                   <button id="node-modal-close" type="button" class="btn btn-xs btn-default">Close</button>
                 </div>
               </div>
-              <div style="border:1px solid #ddd; border-radius:4px; max-height:420px; overflow:auto;">
-                <table id="node-modal-table" class="table table-condensed table-striped" style="margin:0; font-size:12px;">
-                  <thead style="position:sticky; top:0; background:#fafafa;">
+              <div class="modal-table-wrap">
+                <table id="node-modal-table" class="table table-condensed table-striped">
+                  <thead>
                     <tr>
-                      <th style="width:18%; cursor:pointer;" data-key="ip">IP / Net <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
-                      <th style="width:16%; cursor:pointer;" data-key="n">Name <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
-                      <th style="width:8%; cursor:pointer;" data-key="i">ID <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
-                      <th style="width:14%; cursor:pointer;" data-key="d">Device <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
-                      <th style="width:14%; cursor:pointer;" data-key="h">Host <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
-                      <th style="width:14%; cursor:pointer;" data-key="m">Master <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
-                      <th style="width:16%;">Actions</th>
+                      <th data-key="ip">IP / Net <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
+                      <th data-key="n">Name <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
+                      <th data-key="i">ID <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
+                      <th data-key="d">Device <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
+                      <th data-key="h">Host <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
+                      <th data-key="m">Master <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody id="node-modal-tbody"><tr><td colspan="6" class="text-muted">Loading...</td></tr></tbody>
                 </table>
               </div>
-              <div style="margin-top:8px; font-size:11px; color:#666; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+              <div class="modal-row-info">
                 <div>Filter supports simple substring match.</div>
                 <div></div>
               </div>
-              <pre id="node-modal-body" style="display:none; margin-top:10px; font-family:monospace; font-size:11px; max-height:320px; overflow:auto; background:#fcfcfc; border:1px solid #eee; padding:8px;"></pre>
+              <pre id="node-modal-body" class="route-modal-body-pre"></pre>
             </div>
           </div>
               <!-- Fetch debug modal -->
               <div id="fetch-debug-modal" class="modal-overlay" aria-hidden="true">
                 <div class="modal-panel modal-panel-sm">
-                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                    <h4 style="margin:0;">Fetch Queue Debug</h4>
-                    <div style="display:flex; gap:8px; align-items:center;"><button id="fetch-debug-close" class="btn btn-xs btn-default">Close</button></div>
+                  <div class="flex-between">
+                    <h4 class="modal-title">Fetch Queue Debug</h4>
+                    <div class="flex-gap-8"><button id="fetch-debug-close" class="btn btn-xs btn-default">Close</button></div>
                   </div>
                     <div class="modal-body-scroll">
                     <pre id="fetch-debug-body" class="modal-pre">Loading...</pre>
@@ -484,13 +484,13 @@
         <!-- Traceroute -->
         <div id="tab-traceroute" class="tab-pane">
           <h3>Traceroute</h3>
-          <div class="form-inline" style="margin-bottom:8px">
-            <input id="tr-host" class="form-control input-sm" placeholder="host or ip" style="width:320px">
+          <div class="form-inline form-inline-mb">
+            <input id="tr-host" class="form-control input-sm tr-host-large" placeholder="host or ip">
             <button id="tr-run" class="btn btn-sm btn-primary">Run</button>
           </div>
-          <pre id="p-traceroute" style="display:none;">Traceroute output will appear here</pre>
+          <pre id="p-traceroute" class="d-none">Traceroute output will appear here</pre>
           <div class="table-search-container"><input class="table-search-input form-control input-sm" data-target="#tracerouteTable" placeholder="Search..."></div>
-          <div class="table-responsive" style="margin-top:8px">
+          <div class="table-responsive mt-8">
             <table id="tracerouteTable" class="table table-condensed table-striped">
               <thead>
                 <tr><th>#</th><th>IP</th><th>Hostname</th><th>Ping</th></tr>
@@ -505,8 +505,8 @@
           <h3>Log <button id="refresh-log" class="btn btn-xs btn-default"><i class="glyphicon glyphicon-refresh"></i></button>
             <span id="log-status" class="small-muted"></span></h3>
           <div class="table-search-container"><input id="log-filter" class="table-search-input form-control input-sm" placeholder="Filter log lines..."></div>
-          <div style="margin-top:8px">
-            <pre id="log-pre" style="max-height:520px; overflow:auto; background:#fcfcfc; border:1px solid #eee; padding:8px; font-size:12px; white-space:pre-wrap; word-break:break-word;">Loading...</pre>
+          <div class="mt-8">
+            <pre id="log-pre" class="log-pre">Loading...</pre>
           </div>
         </div>
 
@@ -520,10 +520,10 @@
         </main>
       </div>
   <!-- Toast for critical fetch queue alerts -->
-      <div id="fetch-toast" style="display:none; position:fixed; right:18px; bottom:18px; z-index:2500;">
-        <div id="fetch-toast-body" style="background:#b94a48; color:#fff; padding:12px 16px; border-radius:6px; box-shadow:0 8px 20px rgba(0,0,0,0.3);">
+      <div id="fetch-toast">
+        <div id="fetch-toast-body">
           <strong>Fetch queue critical</strong>
-          <div id="fetch-toast-msg" style="font-size:12px; margin-top:6px;"></div>
+          <div id="fetch-toast-msg"></div>
         </div>
       </div>
 
@@ -531,12 +531,12 @@
       <div id="footer-diagnostics-panel" class="footer-diagnostics" aria-hidden="true">
         <div class="footer-diagnostics-inner">
           <div class="footer-diagnostics-header">
-            <div style="font-weight:700;">Diagnostics</div>
-            <div style="margin-left:12px; color:#666; font-size:12px;">Live diagnostics snapshot</div>
+            <div class="fw-700">Diagnostics</div>
+            <div class="small-muted ml-12">Live diagnostics snapshot</div>
             <!-- prominent versions/timestamp (populated by app.js) -->
-            <div id="diag-versions-string" style="margin-left:auto; font-size:12px; color:#222; font-weight:600; padding:4px 8px; background:#f6f8fa; border-radius:4px; border:1px solid #e6e9ec;">&nbsp;</div>
-            <div style="margin-left:auto; display:flex; gap:8px; align-items:center;">
-              <div style="font-size:12px; color:#666;">View:</div>
+            <div id="diag-versions-string" class="diag-versions-badge">&nbsp;</div>
+            <div class="flex-gap-8 ml-auto">
+              <div class="small-muted">View:</div>
               <button id="diag-view-toggle" class="btn btn-xs btn-default">Compact</button>
               <button id="diag-flatten-btn" class="btn btn-xs btn-default">Flatten</button>
               <button id="footer-diagnostics-close" class="btn btn-xs btn-default">Close</button>
@@ -544,46 +544,44 @@
           </div>
           <div id="footer-diagnostics-body" class="footer-diagnostics-body">
             <!-- content populated by JS -->
-            <div class="small-muted" style="padding:12px">Click open to load diagnostics.</div>
+            <div class="small-muted small-muted-padding">Click open to load diagnostics.</div>
           </div>
         </div>
       </div>
 
       <!-- Minimal sticky footer with pending-request count and served-by on the left -->
-      <footer id="status-footer" style="position:fixed; left:0; right:0; bottom:0; height:28px; background:#f1f1f1; z-index:2400; pointer-events:none;">
-        <div style="max-width:100%; margin:0 auto; padding:4px 12px; height:100%; display:flex; align-items:center; justify-content:space-between;">
-          <div style="pointer-events:auto; display:flex; align-items:center; gap:8px; color:#666; font-size:12px;">
-            <span id="footer-served">Served by olsrd-status-plugin</span>
-            <span style="color:#999;">|</span>
-            <span id="footer-latency" style="color:#666; font-size:12px;">RTT: -- ms</span>
-          </div>
-          <div id="footer-indicators" style="pointer-events:auto; display:flex; gap:12px; align-items:center;">
-            <div style="display:flex; align-items:center; gap:8px; font-size:12px; color:#666;">
-              <!-- inline SVG clock icon -->
+      <footer id="status-footer" class="status-footer">
+        <div class="footer-inner">
+          <div class="footer-left">
+              <span id="footer-served">Served by olsrd-status-plugin</span>
+              <span class="footer-sep">|</span>
+              <span id="footer-latency">RTT: -- ms</span>
+            </div>
+          <div id="footer-indicators" class="footer-right">
+            <div class="footer-right-item">
               <svg class="footer-small-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" title="Last updated"><path d="M8 3.5a.5.5 0 0 1 .5.5v3l2 1a.5.5 0 1 1-.5.866L8 7V4a.5.5 0 0 1 .5-.5zM8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2z"/></svg>
-              <div id="footer-last-updated" class="footer-trunc" style="text-align:left;">-</div>
+              <div id="footer-last-updated" class="footer-trunc">-</div>
             </div>
             <span class="footer-sep">|</span>
-            <div style="display:flex; align-items:center; gap:8px; font-size:12px; color:#666;">
-              <!-- inline SVG arrow icon for last request -->
+            <div class="footer-right-item">
               <svg class="footer-small-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" title="Last request"><path d="M2 8a.5.5 0 0 1 .5-.5h8.793L9.146 5.354a.5.5 0 1 1 .708-.708l3 3a.498.498 0 0 1 .146.354.498.498 0 0 1-.146.354l-3 3a.5.5 0 0 1-.708-.708L11.293 8.5H2.5A.5.5 0 0 1 2 8z"/></svg>
-              <div id="footer-last-request" class="footer-trunc" style="text-align:left;">-</div>
+              <div id="footer-last-request" class="footer-trunc">-</div>
             </div>
             <span class="footer-sep">|</span>
-            <div style="display:flex; align-items:center; gap:8px; font-size:12px; color:#666;">
+            <div class="footer-right-item">
               <div class="footer-diag-summary" id="footer-diag-summary">&nbsp;</div>
               <div id="footer-pending" title="No pending requests" class="footer-pending">0</div>
               <div id="footer-dot" class="footer-dot footer-dot-off" aria-hidden="true" title="idle"></div>
             </div>
             <!-- small handle to open diagnostics drawer -->
-            <div id="footer-diagnostics-handle" title="Open diagnostics" style="pointer-events:auto; margin-left:8px; padding:4px 8px; border-radius:4px; background:#eef3ff; color:#013369; font-size:12px; cursor:pointer; border:1px solid #c9deff;">Diagnostics</div>
+            <div id="footer-diagnostics-handle" title="Open diagnostics" class="diag-handle">Diagnostics</div>
           </div>
         </div>
       </footer>
 
       <!-- Small transient toast for actions (refresh success/error) -->
-      <div id="action-toast" style="display:none; position:fixed; right:18px; bottom:86px; z-index:2500;">
-        <div id="action-toast-body" style="background:#333; color:#fff; padding:8px 12px; border-radius:6px; box-shadow:0 6px 16px rgba(0,0,0,0.25);">Action</div>
+      <div id="action-toast">
+        <div id="action-toast-body">Action</div>
       </div>
 
   <!-- legacy served-by footer removed (moved into sticky footer) -->
@@ -598,12 +596,34 @@
 </html>
 
 <!-- Diagnostics modal for expanded card JSON -->
-<div id="diag-expand-modal" class="modal-overlay" aria-hidden="true">
-  <div class="modal-panel modal-panel-sm">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-      <div style="font-weight:700">Diagnostics Detail</div>
-      <div><button id="diag-expand-close" class="btn btn-xs btn-default">Close</button></div>
-    </div>
-    <div id="diag-expand-body" class="modal-body-scroll"><pre id="diag-expand-pre" class="modal-pre"></pre></div>
-  </div>
-</div>
+          <div id="node-modal" class="modal-overlay" aria-hidden="true">
+            <div class="modal-panel">
+              <div class="modal-row">
+                <div class="modal-row-left">
+                  <h4 id="node-modal-title" class="modal-title">Nodes</h4>
+                  <span id="node-modal-count" class="label label-primary d-none"></span>
+                </div>
+                <div class="modal-row-right">
+                  <input id="node-filter" type="text" class="form-control input-sm input-wide-220" placeholder="Filter (name, ip, device)">
+                  <button id="node-copy" type="button" class="btn btn-xs btn-default" title="Copy visible nodes"><span class="glyphicon glyphicon-copy" aria-hidden="true"></span></button>
+                  <button id="node-modal-close" type="button" class="btn btn-xs btn-default">Close</button>
+                </div>
+              </div>
+              <div class="modal-table-wrap">
+                <table id="node-modal-table" class="table table-condensed table-striped">
+                  <thead>
+                    <tr>
+                      <th data-key="ip">IP / Net <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
+                      <th data-key="n">Name <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
+                      <th data-key="i">ID <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
+                      <th data-key="d">Device <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
+                      <th data-key="h">Host <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
+                      <th data-key="m">Master <span class="glyphicon glyphicon-sort" aria-hidden="true"></span></th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="node-modal-tbody"><tr><td colspan="6" class="text-muted">Loading...</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
