@@ -4384,6 +4384,17 @@ static int h_status_lite(http_request_t *r) {
             unsigned long h_nodes = 0, h_routes = 0; heuristic_count_ips_in_raw(combined, &h_nodes, &h_routes);
             if (h_nodes > 0 || h_routes > 0) { olsr_routes = h_routes; olsr_nodes = h_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes); if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: heuristic counts (no norm) nodes=%lu routes=%lu\n", h_nodes, h_routes); }
           }
+          /* Defensive: ensure we don't report wildly inconsistent counts. If one
+           * side is zero but the other is non-zero, copy the non-zero value so
+           * the UI shows a sensible (conservative) number instead of e.g.
+           * routes=1 nodes=67. Update the metric atomics when we adjust. */
+          if (olsr_routes == 0 && olsr_nodes > 0) {
+            olsr_routes = olsr_nodes;
+            METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
+          } else if (olsr_nodes == 0 && olsr_routes > 0) {
+            olsr_nodes = olsr_routes;
+            METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
+          }
           if (lite_olsr2_on && olsr2_nodes > olsr_nodes) {
             olsr_nodes = olsr2_nodes;
             olsr_routes = olsr2_routes;
