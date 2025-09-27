@@ -1,4 +1,12 @@
 /* Custom tweaks for olsrd-status-plugin UI */
+/*
+  NOTE: The following selectors were identified by a cleanup scan as likely
+  unused in the repository. They are preserved for now to avoid breaking
+  dynamic usage, but they are candidates for safe removal in a follow-up.
+  Candidate selectors: 9em, action-btn, diag-action-btn, diag-effective-badge,
+  diag-subcopy, diag-subgroup, live-dot-stale, live-dot-updating, modal-actions,
+  monopre, spark-info, spark-ts, src-arp, src-ubnt-discover, src-unknown, stats-block
+*/
 /* Prevent very long node names from wrapping; instead allow horizontal scrolling inside the cell */
 #connectionsTable td:nth-child(7),
 #neighborsTable td:nth-child(5),
