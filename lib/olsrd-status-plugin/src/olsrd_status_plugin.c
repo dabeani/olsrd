@@ -403,6 +403,8 @@ static int resolve_ip_to_hostname(const char *ip, char *out, size_t outlen) {
 /* Cached hostname lookup forward declaration (defined later). Placed here so
  * callers early in the file can use cached lookups without implicit decls. */
 void lookup_hostname_cached(const char *ip, char *out, size_t outlen);
+/* forward declaration: prefer static linkage to match the later definition */
+static int lookup_hostname_from_nodedb(const char *ip, char *out, size_t outlen);
 
 /* Runtime check for UBNT debug env var. Prefer environment toggle so operators
  * can enable verbose UBNT discovery traces without recompiling. Returns 1 when
