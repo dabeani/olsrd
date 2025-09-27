@@ -3101,9 +3101,35 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
   return 0;
 }
 
-/* Build OLSR2 HTTP URL with configurable port */
-static void build_olsr2_url(char *buf, size_t bufsize, const char *path) {
-  snprintf(buf, bufsize, "http://127.0.0.1:%d/%s", g_olsr2_telnet_port, path);
+/* Build OLSR2 telnet URL with configurable port */
+static void build_olsr2_url(char *buf, size_t bufsize, const char *command) {
+  /* Percent-encode spaces in the telnet command so the local HTTP server
+   * receives the intended arguments rather than treating them as path
+   * separators. We only need to encode spaces here because commands are
+   * simple (e.g. "olsrv2info json originator"), but keep it small and
+   * defensive.
+   */
+  /* enc must be smaller than the final URL buffer to ensure snprintf cannot
+   * produce a truncated-format warning. Keep it conservative (220 bytes)
+   * because the URL prefix consumes ~30 bytes.
+   */
+  char enc[220];
+  const char *s = command;
+  char *d = enc;
+  size_t rem = sizeof(enc) - 1;
+  while (*s && rem > 0) {
+    if (*s == ' ') {
+      if (rem < 3) break;
+      *d++ = '%'; *d++ = '2'; *d++ = '0';
+      rem -= 3;
+    } else {
+      *d++ = *s;
+      rem--;
+    }
+    s++;
+  }
+  *d = '\0';
+  snprintf(buf, bufsize, "http://127.0.0.1:%d/telnet/%s", g_olsr2_telnet_port, enc);
 }
 
 /* Build OLSRd jsoninfo URL with configurable port */
