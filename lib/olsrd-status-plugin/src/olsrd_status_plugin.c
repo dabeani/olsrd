@@ -6235,8 +6235,9 @@ static int h_traceroute(http_request_t *r) {
   size_t cmdlen = strlen(g_traceroute_path) + 4 + strlen(target) + 32;
   char *cmd = (char*)malloc(cmdlen);
   if (!cmd) { send_text(r, "error allocating memory\n"); return 0; }
-  /* conservative flags: IPv4, numeric, wait 2s, 1 probe per hop, max 8 hops */
-  snprintf(cmd, cmdlen, "%s -4 -n -w 2 -q 1 -m 8 %s 2>&1", g_traceroute_path, target);
+  /* conservative flags: IPv4/IPv6, numeric, wait 2s, 1 probe per hop, max 8 hops */
+  int is_ipv6 = (strchr(target, ':') != NULL);
+  snprintf(cmd, cmdlen, "%s %s -n -w 2 -q 1 -m 8 %s 2>&1", g_traceroute_path, is_ipv6 ? "-6" : "-4", target);
   char *out = NULL; size_t n = 0;
   if (util_exec(cmd, &out, &n) == 0 && out) {
     if (want_json[0] && (want_json[0]=='j' || want_json[0]=='J')) {
