@@ -182,7 +182,7 @@
 #global-versions-header .status-badges { gap:6px; }
 
 /* Compact info-item style: denser left/right rows used for versions and other cards */
-.info-item-compact {
+.info-item-compact, .info-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -192,8 +192,8 @@
   background: #fbfbfb;
   font-size: 13px;
 }
-.info-item-compact .info-label { font-weight:600; color:#333; display:flex; align-items:center; gap:6px; }
-.info-item-compact .info-value { color:#5a5f66; max-width:360px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right; }
+.info-item-compact .info-label, .info-item .info-label { font-weight:600; color:#333; display:flex; align-items:center; gap:6px; }
+.info-item-compact .info-value, .info-item .info-value { color:#5a5f66; max-width:360px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right; }
 
 /* General info value cell used by dynamic JS renderers */
 .info-value { text-align: right; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
