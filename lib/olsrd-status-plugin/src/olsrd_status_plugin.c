@@ -6397,8 +6397,16 @@ static int h_traceroute(http_request_t *r) {
           char resolved[256] = "";
           lookup_hostname_cached(hops[i].ip, resolved, sizeof(resolved));
           if (resolved[0]) {
-            /* limit copy to host buffer size to avoid truncation warnings */
-            snprintf(hops[i].host, sizeof(hops[i].host), "%.*s", (int)sizeof(hops[i].host) - 1, resolved);
+            /* If the resolver returns an address literal (sometimes reverse DNS is configured to return the IP string),
+             * skip it. Accept only names that contain a letter (a-z) to avoid copying numeric-only results.
+             */
+            int has_alpha = 0; for (char *c = resolved; *c; ++c) { if (isalpha((unsigned char)*c)) { has_alpha = 1; break; } }
+            if (!has_alpha) {
+              /* skip numeric reverse result */
+            } else {
+              /* limit copy to host buffer size to avoid truncation warnings */
+              snprintf(hops[i].host, sizeof(hops[i].host), "%.*s", (int)sizeof(hops[i].host) - 1, resolved);
+            }
           }
         }
       }
