@@ -3239,7 +3239,7 @@ static int util_http_get_olsr2_local(const char *command, char **out, size_t *ou
   }
 
   /* Autodetect common OLSRv2 telnet ports if the configured port failed */
-  static const int fallback_ports[] = { 2009, 2006, 2010, 9000, 8000 };
+  static const int fallback_ports[] = { 8000 };
   for (size_t i = 0; i < sizeof(fallback_ports)/sizeof(fallback_ports[0]); ++i) {
     int candidate = fallback_ports[i];
     if (candidate == g_olsr2_telnet_port) continue;
