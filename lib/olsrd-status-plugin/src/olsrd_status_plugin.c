@@ -5093,65 +5093,65 @@ static int h_status_stats(http_request_t *r) {
   it = g_fetch_q_head; while (it) { qlen++; it = it->next; }
   pthread_mutex_unlock(&g_fetch_q_lock);
 
-  // Approximate olsr routes/nodes from cached metrics
-  unsigned long olsr_routes = unique_routes; unsigned long olsr_nodes = unique_nodes;
+  // Approximate olsr routes/nodes from cached metrics and refresh using live collectors when possible
+  unsigned long olsr_routes = unique_routes;
+  unsigned long olsr_nodes = unique_nodes;
 
-  /* Compute live counts from in-memory core implementation if unique metrics are zero.
-   * This provides immediate feedback in the UI even when normalize step hasn't been run
-   * by a full /status request yet.
-   */
-  if (olsr_routes == 0 && olsr_nodes == 0) {
-    char *links_raw = NULL;
-    char *routes_raw = NULL;
-    char *topology_raw = NULL;
-    size_t links_len = 0, routes_len = 0, topology_len = 0;
-    /* Collect from in-memory core implementation */
-    {
-      struct autobuf ab;
-      if (abuf_init(&ab, 4096) == 0) {
-        status_collect_links(&ab);
-        if (ab.len > 0) {
-          links_raw = malloc(ab.len + 1);
-          if (links_raw) { memcpy(links_raw, ab.buf, ab.len); links_raw[ab.len] = '\0'; links_len = ab.len; }
-        }
-        abuf_free(&ab);
-      }
-    }
-    {
-      struct autobuf ab;
-      if (abuf_init(&ab, 4096) == 0) {
-        status_collect_routes(&ab);
-        if (ab.len > 0) {
-          routes_raw = malloc(ab.len + 1);
-          if (routes_raw) { memcpy(routes_raw, ab.buf, ab.len); routes_raw[ab.len] = '\0'; routes_len = ab.len; }
-        }
-        abuf_free(&ab);
-      }
-    }
-    {
-      struct autobuf ab;
-      if (abuf_init(&ab, 4096) == 0) {
-        status_collect_topology(&ab);
-        if (ab.len > 0) {
-          topology_raw = malloc(ab.len + 1);
-          if (topology_raw) { memcpy(topology_raw, ab.buf, ab.len); topology_raw[ab.len] = '\0'; topology_len = ab.len; }
-        }
-        abuf_free(&ab);
-      }
-    }
-    if (links_raw || routes_raw || topology_raw) {
-      unsigned long derived_routes = olsr_routes;
-      unsigned long derived_nodes = olsr_nodes;
-      compute_olsr_counts_from_snapshots(links_raw, links_len, routes_raw, routes_len,
-                                         topology_raw, topology_len,
-                                         &derived_routes, &derived_nodes, 1);
-      olsr_routes = derived_routes;
-      olsr_nodes = derived_nodes;
-    }
-    if (links_raw) free(links_raw);
-    if (routes_raw) free(routes_raw);
-    if (topology_raw) free(topology_raw);
+  int olsrd_on = 0, olsr2_on = 0;
+  detect_olsr_processes(&olsrd_on, &olsr2_on);
+  int olsrd_exists = 0;
+  const char *olsrd_candidates[] = { "/usr/sbin/olsrd", "/usr/bin/olsrd", "/sbin/olsrd", NULL };
+  for (const char **p = olsrd_candidates; *p; ++p) {
+    if (path_exists(*p)) { olsrd_exists = 1; break; }
   }
+
+  int should_refresh_counts = (olsr_routes == 0 && olsr_nodes == 0) || olsrd_on || olsrd_exists;
+  char *links_raw = NULL;
+  char *routes_raw = NULL;
+  char *topology_raw = NULL;
+  size_t links_len = 0, routes_len = 0, topology_len = 0;
+
+  if (should_refresh_counts) {
+    struct autobuf ab;
+    if (abuf_init(&ab, 4096) == 0) {
+      status_collect_links(&ab);
+      if (ab.len > 0) {
+        links_raw = malloc(ab.len + 1);
+        if (links_raw) { memcpy(links_raw, ab.buf, ab.len); links_raw[ab.len] = '\0'; links_len = ab.len; }
+      }
+      abuf_free(&ab);
+    }
+    if (abuf_init(&ab, 4096) == 0) {
+      status_collect_routes(&ab);
+      if (ab.len > 0) {
+        routes_raw = malloc(ab.len + 1);
+        if (routes_raw) { memcpy(routes_raw, ab.buf, ab.len); routes_raw[ab.len] = '\0'; routes_len = ab.len; }
+      }
+      abuf_free(&ab);
+    }
+    if (abuf_init(&ab, 4096) == 0) {
+      status_collect_topology(&ab);
+      if (ab.len > 0) {
+        topology_raw = malloc(ab.len + 1);
+        if (topology_raw) { memcpy(topology_raw, ab.buf, ab.len); topology_raw[ab.len] = '\0'; topology_len = ab.len; }
+      }
+      abuf_free(&ab);
+    }
+  }
+
+  if (links_raw || routes_raw || topology_raw) {
+    unsigned long derived_routes = olsr_routes;
+    unsigned long derived_nodes = olsr_nodes;
+    compute_olsr_counts_from_snapshots(links_raw, links_len, routes_raw, routes_len,
+                                       topology_raw, topology_len,
+                                       &derived_routes, &derived_nodes, 1);
+    olsr_routes = derived_routes;
+    olsr_nodes = derived_nodes;
+  }
+
+  if (links_raw) free(links_raw);
+  if (routes_raw) free(routes_raw);
+  if (topology_raw) free(topology_raw);
 
   /* Attempt to fetch memory stats on Linux via /proc/meminfo (fallback to omitted on other OSes) */
   unsigned long mem_total_kb = 0, mem_free_kb = 0, mem_available_kb = 0;
