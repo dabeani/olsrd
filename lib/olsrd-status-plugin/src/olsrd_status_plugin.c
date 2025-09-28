@@ -1749,6 +1749,57 @@ static void heuristic_count_ips_in_raw(const char *raw, unsigned long *out_nodes
 static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen);
 int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen);
 
+/* Collect unique JSON string values for the given field tokens (e.g. "\"destination\":").
+ * The function tolerates a mixture of tokens and returns the number of unique string values
+ * encountered up to an internal cap to avoid unbounded memory usage.
+ */
+static unsigned long count_unique_json_fields(const char *blob, const char *const tokens[], size_t token_count) {
+  if (!blob || !tokens || token_count == 0) return 0;
+  const size_t MAX_UNIQ = 8192;
+  char **uniq = calloc(MAX_UNIQ, sizeof(char*));
+  if (!uniq) return 0;
+  size_t uniq_count = 0;
+
+  for (size_t ti = 0; ti < token_count; ++ti) {
+    const char *needle = tokens[ti];
+    if (!needle) continue;
+    size_t needle_len = strlen(needle);
+    if (needle_len == 0) continue;
+    const char *p = blob;
+    while ((p = strstr(p, needle)) != NULL) {
+      p += needle_len;
+      const char *q = p;
+      while (*q && *q != '"') q++;
+      if (!*q) break;
+      size_t L = (size_t)(q - p);
+      while (L > 0 && isspace((unsigned char)p[L - 1])) L--;
+      if (L == 0) { p = q + 1; continue; }
+      if (L >= 128) L = 127;
+      char tmp[128];
+      memcpy(tmp, p, L);
+      tmp[L] = '\0';
+      int dup = 0;
+      for (size_t ui = 0; ui < uniq_count; ++ui) {
+        if (strcmp(uniq[ui], tmp) == 0) { dup = 1; break; }
+      }
+      if (!dup && uniq_count < MAX_UNIQ) {
+        uniq[uniq_count] = strdup(tmp);
+        if (uniq[uniq_count]) {
+          uniq_count++;
+        }
+      }
+      p = (*q) ? (q + 1) : q;
+    }
+  }
+
+  unsigned long result = (unsigned long)uniq_count;
+  for (size_t ui = 0; ui < uniq_count; ++ui) {
+    free(uniq[ui]);
+  }
+  free(uniq);
+  return result;
+}
+
 /* Shared helper: derive OLSR route/node counts from raw collector snapshots or
  * HTTP dumps. Handles normalized JSON, legacy plain-text tables, and heuristic
  * fallbacks so lightweight endpoints can surface non-zero counts without
@@ -1853,6 +1904,37 @@ static void compute_olsr_counts_from_snapshots(const char *links_raw, size_t lin
   } else if (direct_routes_count > 0) {
     routes = direct_routes_count;
     have_counts = 1;
+  }
+
+  /* Prefer direct unique counts from routes/topology textual tables when available.
+   * This provides parity with legacy scripts that counted distinct destinations.
+   */
+  {
+    static const char *const route_tokens[] = {
+      "\"destination\":\"",
+      "\"destinationIPNet\":\"",
+      "\"dst\":\""
+    };
+    unsigned long unique_routes = count_unique_json_fields(routes_raw, route_tokens, sizeof(route_tokens)/sizeof(route_tokens[0]));
+    if (unique_routes > 0 && unique_routes > routes) {
+      routes = unique_routes;
+      have_counts = 1;
+    }
+    static const char *const topology_tokens[] = {
+      "\"destinationIP\":\"",
+      "\"destIpAddress\":\""
+    };
+    unsigned long unique_nodes = count_unique_json_fields(topology_raw ? topology_raw : routes_raw, topology_tokens, sizeof(topology_tokens)/sizeof(topology_tokens[0]));
+    if (unique_nodes == 0 && !topology_raw) {
+      unique_nodes = unique_routes;
+    }
+    if (unique_nodes > 0 && unique_nodes > nodes) {
+      nodes = unique_nodes;
+      have_counts = 1;
+    } else if (nodes == 0 && unique_routes > 0) {
+      nodes = unique_routes;
+      have_counts = 1;
+    }
   }
 
   if (update_metrics && have_counts) {
