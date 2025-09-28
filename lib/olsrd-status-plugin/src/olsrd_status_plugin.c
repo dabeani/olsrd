@@ -1370,6 +1370,116 @@ static int count_routes_for_ip(const char *section, const char *ip) {
     }
     p++;
   }
+  /* Legacy/plain-text fallback: parse appended JSON helpers inside the txtinfo-style table to count
+     distinct destinations per gateway. status_collect_routes() appends a JSON object per line with
+     destination/gateway hints, e.g. {"destination":"1.2.3.0/24","gateway":"10.0.0.1"}. */
+  if (cnt == 0) {
+    const char *section_end = section + strlen(section);
+    const int MAX_UNIQUE_ROUTES = 8192;
+    char (*unique_routes)[128] = NULL;
+    int unique_count = 0;
+    unique_routes = (char (*)[128])calloc((size_t)MAX_UNIQUE_ROUTES, sizeof(*unique_routes));
+    const char *line = section;
+    while (line < section_end) {
+      const char *newline = memchr(line, '\n', (size_t)(section_end - line));
+      const char *line_end = newline ? newline : section_end;
+      size_t line_len = (size_t)(line_end - line);
+      if (line_len == 0) {
+        line = newline ? newline + 1 : section_end;
+        continue;
+      }
+      /* Skip table headers */
+      if ((line_len >= 6 && strncmp(line, "Table:", 6) == 0) ||
+          (line_len >= 11 && strncmp(line, "Destination", 11) == 0)) {
+        line = newline ? newline + 1 : section_end;
+        continue;
+      }
+      const char *obj = memchr(line, '{', line_len);
+      if (!obj) {
+        line = newline ? newline + 1 : section_end;
+        continue;
+      }
+      const char *json_end = obj;
+      int brace_depth = 0;
+      while (json_end < line_end) {
+        if (*json_end == '{') brace_depth++;
+        else if (*json_end == '}') {
+          brace_depth--;
+          if (brace_depth == 0) {
+            json_end++;
+            break;
+          }
+        }
+        json_end++;
+      }
+      if (brace_depth != 0) {
+        line = newline ? newline + 1 : section_end;
+        continue;
+      }
+      char gw[64] = "";
+      char *v = NULL; size_t vlen = 0;
+      if (find_json_string_value(obj, "gateway", &v, &vlen) ||
+          find_json_string_value(obj, "gatewayIp", &v, &vlen) ||
+          find_json_string_value(obj, "gatewayIP", &v, &vlen) ||
+          find_json_string_value(obj, "nextHop", &v, &vlen) ||
+          find_json_string_value(obj, "neighbor", &v, &vlen)) {
+        size_t copy = vlen < sizeof(gw) - 1 ? vlen : sizeof(gw) - 1;
+        memcpy(gw, v, copy);
+        gw[copy] = '\0';
+        char *slash = strchr(gw, '/');
+        if (slash) *slash = '\0';
+      }
+      if (gw[0] && strcmp(gw, ip) == 0) {
+        char dest[128] = "";
+        if (find_json_string_value(obj, "destination", &v, &vlen) ||
+            find_json_string_value(obj, "destinationIP", &v, &vlen) ||
+            find_json_string_value(obj, "destinationIp", &v, &vlen) ||
+            find_json_string_value(obj, "dest", &v, &vlen) ||
+            find_json_string_value(obj, "target", &v, &vlen) ||
+            find_json_string_value(obj, "originator", &v, &vlen)) {
+          size_t copy = vlen < sizeof(dest) - 1 ? vlen : sizeof(dest) - 1;
+          memcpy(dest, v, copy);
+          dest[copy] = '\0';
+        }
+        if (!dest[0]) {
+          const char *tab = memchr(line, '\t', line_len);
+          if (tab && tab > line) {
+            size_t copy = (size_t)(tab - line);
+            if (copy >= sizeof(dest)) copy = sizeof(dest) - 1;
+            memcpy(dest, line, copy);
+            dest[copy] = '\0';
+          }
+        }
+        /* trim whitespace */
+        size_t dl = strlen(dest);
+        while (dl > 0 && isspace((unsigned char)dest[dl - 1])) dest[--dl] = '\0';
+        char *trim = dest;
+        while (*trim && isspace((unsigned char)*trim)) trim++;
+        if (trim != dest) memmove(dest, trim, strlen(trim) + 1);
+        if (!dest[0]) {
+          snprintf(dest, sizeof(dest), "%s-%zu", ip, (size_t)(line - section));
+        }
+        if (unique_routes) {
+          int duplicate = 0;
+          for (int i = 0; i < unique_count; ++i) {
+            if (strcmp(unique_routes[i], dest) == 0) { duplicate = 1; break; }
+          }
+          if (!duplicate && unique_count < MAX_UNIQUE_ROUTES) {
+            snprintf(unique_routes[unique_count], sizeof(unique_routes[unique_count]), "%s", dest);
+            unique_count++;
+          }
+        } else {
+          cnt++;
+        }
+      }
+      line = newline ? newline + 1 : section_end;
+    }
+    if (unique_routes) {
+      cnt = unique_count;
+      free(unique_routes);
+    }
+  }
+
   /* Legacy fallback: routes represented as array of plain strings without gateway field.
      Format examples: "193.238.158.38  1" or "78.41.112.141  5".
      We approximate "routes via ip" by counting how many destination strings START with the neighbor IP.
