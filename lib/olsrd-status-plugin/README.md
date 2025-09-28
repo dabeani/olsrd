@@ -109,7 +109,7 @@ Caching: the endpoint participates in the same coalescer / TTL logic as UBNT dis
 Note: ARP‑derived synthetic devices are intentionally excluded from `/devices.json` even when ARP fallback is enabled globally; the endpoint reflects only concrete discovery replies.
 
 ## Data Sources & Normalization Flow
-1. Probe local OLSR JSON endpoints (`:9090`, `:2006`, `:8123`) with short timeouts.
+1. Probe local OLSR JSON endpoints (`:9090`, `:2006`, `:8123`) with short timeouts; fall back to parsing the legacy plain-text tables when JSON is unavailable.
 2. Concatenate available raw documents for unified parsing.
 3. Extract link objects; for each neighbor IP derive:
      * `routes`: count of route entries whose gateway/nextHop matches remote.
@@ -117,6 +117,8 @@ Note: ARP‑derived synthetic devices are intentionally excluded from `/devices.
 4. Resolve default route and flag matching neighbor `is_default`.
 5. Enrich LQ/NLQ, cost, reverse DNS, and hostnames.
 6. Optionally merge UBNT discovery + ARP into device inventory & node DB.
+
+For OLSR2 data the plugin auto-detects the local telnet bridge port (falling back to `2009`, `2010`, `2007`, `2008`) and percent-encodes commands so both link and neighbor snapshots return across diverse firmware builds.
 
 ## Environment & Runtime Detection
 * EdgeRouter detection (filesystem layout) to add `admin_url`.

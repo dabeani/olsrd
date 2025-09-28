@@ -2125,7 +2125,19 @@ static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen)
       }
     }
   }
+  if (!routes_section) {
+    const char *plain_routes = strstr(raw, "Table: Routes");
+    if (plain_routes) routes_section = plain_routes;
+  }
+  if (!topology_section) {
+    const char *plain_topology = strstr(raw, "Table: Topology");
+    if (plain_topology) topology_section = plain_topology;
+  }
   const char *neighbors_section = strstr(raw, "\"neighbors\"");
+  if (!neighbors_section) {
+    const char *plain_neighbors = strstr(raw, "Table: Neighbors");
+    if (plain_neighbors) neighbors_section = plain_neighbors;
+  }
   while (*q) {
     if (*q == '[') { depth++; q++; continue; }
     if (*q == ']') { depth--; if (depth==0) break; q++; continue; }
@@ -3104,22 +3116,21 @@ static int generate_versions_json(char **outbuf, size_t *outlen) {
   return 0;
 }
 
-/* Build OLSR2 telnet URL with configurable port */
-static void build_olsr2_url(char *buf, size_t bufsize, const char *command) {
-  /* Percent-encode spaces in the telnet command so the local HTTP server
-   * receives the intended arguments rather than treating them as path
-   * separators. We only need to encode spaces here because commands are
-   * simple (e.g. "olsrv2info json originator"), but keep it small and
-   * defensive.
-   */
-  /* enc must be smaller than the final URL buffer to ensure snprintf cannot
-   * produce a truncated-format warning. Keep it conservative (220 bytes)
-   * because the URL prefix consumes ~30 bytes.
-   */
-  char enc[220];
+/* Percent-encode the telnet command so the local HTTP server receives the
+ * full command string (spaces become %20 etc.). We only encode spaces for
+ * now because known commands are simple tokens; extend as needed.
+ */
+static void encode_olsr2_command(char *out, size_t outlen, const char *command) {
+  if (!out || outlen == 0) {
+    return;
+  }
+  if (!command) {
+    out[0] = '\0';
+    return;
+  }
   const char *s = command;
-  char *d = enc;
-  size_t rem = sizeof(enc) - 1;
+  char *d = out;
+  size_t rem = outlen - 1;
   while (*s && rem > 0) {
     if (*s == ' ') {
       if (rem < 3) break;
@@ -3132,6 +3143,12 @@ static void build_olsr2_url(char *buf, size_t bufsize, const char *command) {
     s++;
   }
   *d = '\0';
+}
+
+/* Build OLSR2 telnet URL with configurable port */
+static void build_olsr2_url(char *buf, size_t bufsize, const char *command) {
+  char enc[220];
+  encode_olsr2_command(enc, sizeof(enc), command);
   snprintf(buf, bufsize, "http://127.0.0.1:%d/telnet/%s", g_olsr2_telnet_port, enc);
 }
 
@@ -3165,6 +3182,34 @@ static int is_probably_json(const char *buf, size_t n) {
   return 0;
 }
 
+/* Attempt to fetch a telnet command via the HTTP bridge on a specific port.
+ * Tries direct 127.0.0.1 socket first (fast path), then falls back to
+ * localhost using getaddrinfo so IPv6-only listeners are covered.
+ */
+static int fetch_olsr2_via_port(int port, const char *enc_cmd, char **out, size_t *out_n) {
+  if (!out || !out_n) return -1;
+  char path[256];
+  const char *cmd = (enc_cmd && enc_cmd[0]) ? enc_cmd : "";
+  snprintf(path, sizeof(path), "/telnet/%s", cmd);
+
+  char url[512];
+  char *tmp = NULL; size_t tlen = 0;
+
+  snprintf(url, sizeof(url), "http://127.0.0.1:%d%s", port, path);
+  if (util_http_get_url_local(url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0 && !is_html_error(tmp, tlen)) {
+    *out = tmp; *out_n = tlen; return 0;
+  }
+  if (tmp) { free(tmp); tmp = NULL; tlen = 0; }
+
+  snprintf(url, sizeof(url), "http://localhost:%d%s", port, path);
+  if (util_http_get_url(url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0 && !is_html_error(tmp, tlen)) {
+    *out = tmp; *out_n = tlen; return 0;
+  }
+  if (tmp) { free(tmp); }
+
+  return -1;
+}
+
 /* Fetch an OLSR2 telnet command via the local telnet HTTP bridge.
  * This builds the URL, fetches it, and treats HTML/HTTP error pages as
  * failures. For some commands (notably nhdpinfo), try a small set of
@@ -3172,26 +3217,49 @@ static int is_probably_json(const char *buf, size_t n) {
  * Returns 0 on success (out/out_n filled), non-zero on failure.
  */
 static int util_http_get_olsr2_local(const char *command, char **out, size_t *out_n) {
-  char url[256];
-  char *tmp = NULL; size_t tlen = 0; int rc = -1;
+  const char *raw_cmd = command ? command : "";
+  char enc[220];
+  encode_olsr2_command(enc, sizeof(enc), raw_cmd);
 
-  build_olsr2_url(url, sizeof(url), command);
-  if (util_http_get_url_local(url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0 && !is_html_error(tmp, tlen)) {
-    *out = tmp; *out_n = tlen; return 0;
+  int need_neighbor_fallback = strstr(raw_cmd, "nhdpinfo json link") != NULL;
+  char neighbor_enc[220];
+  if (need_neighbor_fallback) {
+    encode_olsr2_command(neighbor_enc, sizeof(neighbor_enc), "nhdpinfo json neighbor");
   }
-  if (tmp) { free(tmp); tmp = NULL; tlen = 0; }
+
+  if (fetch_olsr2_via_port(g_olsr2_telnet_port, enc, out, out_n) == 0) {
+    return 0;
+  }
 
   /* Simple fallback: if asking for nhdpinfo link, try nhdpinfo neighbor */
-  if (strstr(command, "nhdpinfo json link") != NULL) {
-    build_olsr2_url(url, sizeof(url), "nhdpinfo json neighbor");
-    if (util_http_get_url_local(url, &tmp, &tlen, 1) == 0 && tmp && tlen > 0 && !is_html_error(tmp, tlen)) {
-      *out = tmp; *out_n = tlen; return 0;
+  if (need_neighbor_fallback) {
+    if (fetch_olsr2_via_port(g_olsr2_telnet_port, neighbor_enc, out, out_n) == 0) {
+      return 0;
     }
-    if (tmp) { free(tmp); tmp = NULL; tlen = 0; }
   }
 
-  /* nothing worked */
-  return rc;
+  /* Autodetect common OLSRv2 telnet ports if the configured port failed */
+  static const int fallback_ports[] = { 2009, 2006, 2010, 9000, 8000 };
+  for (size_t i = 0; i < sizeof(fallback_ports)/sizeof(fallback_ports[0]); ++i) {
+    int candidate = fallback_ports[i];
+    if (candidate == g_olsr2_telnet_port) continue;
+    if (fetch_olsr2_via_port(candidate, enc, out, out_n) == 0) {
+      int old_port = g_olsr2_telnet_port;
+      g_olsr2_telnet_port = candidate;
+      fprintf(stderr, "[status-plugin] auto-detected olsr2 telnet port: %d (was %d)\n", candidate, old_port);
+      return 0;
+    }
+    if (need_neighbor_fallback) {
+      if (fetch_olsr2_via_port(candidate, neighbor_enc, out, out_n) == 0) {
+        int old_port = g_olsr2_telnet_port;
+        g_olsr2_telnet_port = candidate;
+        fprintf(stderr, "[status-plugin] auto-detected olsr2 telnet port: %d (was %d)\n", candidate, old_port);
+        return 0;
+      }
+    }
+  }
+
+  return -1;
 }
 
 /* Robust detection of olsrd / olsrd2 processes for diverse environments (EdgeRouter, containers, musl) */
@@ -4413,17 +4481,6 @@ static int h_status_lite(http_request_t *r) {
             } else if (direct_routes_count > 0) {
               olsr_routes = direct_routes_count; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
             }
-          }
-          /* Defensive: ensure we don't report wildly inconsistent counts. If one
-           * side is zero but the other is non-zero, copy the non-zero value so
-           * the UI shows a sensible (conservative) number instead of e.g.
-           * routes=1 nodes=67. Update the metric atomics when we adjust. */
-          if (olsr_routes == 0 && olsr_nodes > 0) {
-            olsr_routes = olsr_nodes;
-            METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
-          } else if (olsr_nodes == 0 && olsr_routes > 0) {
-            olsr_nodes = olsr_routes;
-            METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
           }
           /* Intentionally do NOT mix OLSR2 counts into OLSRd (v1) statistics.
            * OLSR and OLSR2 are separate protocols and their metrics should
