@@ -103,76 +103,142 @@ int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen) 
       int nodes_count = 0;
       if (raw && remote && remote[0]) {
         /* count occurrences of gateway JSON fragments: "gateway":"<remote> */
-        char pat_gw[128]; snprintf(pat_gw, sizeof(pat_gw), "\"gateway\":\"%s", remote);
-        const char *sr = raw; int safety = 0;
-        while ((sr = strstr(sr, pat_gw)) && safety < 100000) { routes_count++; sr += strlen(pat_gw); safety++; }
+        char pat_gw[128];
+        snprintf(pat_gw, sizeof(pat_gw), "\"gateway\":\"%s", remote);
+        const char *scan = raw;
+        int guard = 0;
+        while ((scan = strstr(scan, pat_gw)) && guard < 100000) {
+          routes_count++;
+          scan += strlen(pat_gw);
+          guard++;
+        }
         /* also count plain-tabbed route lines where second column equals remote (Table: Routes tab format)
          * Format: Destination\tGateway IP\tMetric\tETX\tInterface
          */
         const char *routes_tbl = strstr(raw, "Table: Routes");
         if (routes_tbl) {
           const char *rt = routes_tbl;
-          /* skip header line */
-          const char *h = strchr(rt, '\n'); if (h) rt = h + 1; else rt = rt + strlen(rt);
+          const char *header_end = strchr(rt, '\n');
+          if (header_end) {
+            rt = header_end + 1;
+          } else {
+            rt = rt + strlen(rt);
+          }
           while (rt && *rt && strncmp(rt, "Table:", 6) != 0) {
-            const char *lnend_rt = strchr(rt, '\n'); if (!lnend_rt) lnend_rt = rt + strlen(rt);
-            size_t lsz2 = (size_t)(lnend - rt);
-            if (lsz2 > 0) {
-              char *line2 = malloc(lsz2 + 1);
-              if (line2) {
-                memcpy(line2, rt, lsz2); line2[lsz2] = '\0';
-                /* split by tabs or spaces; we only need the second field */
-                char *tmp2 = strdup(line2);
+            const char *line_end = strchr(rt, '\n');
+            if (!line_end) line_end = rt + strlen(rt);
+            size_t line_len = (size_t)(line_end - rt);
+            while (line_len > 0 && (rt[line_len - 1] == '\r' || rt[line_len - 1] == '\n')) {
+              line_len--;
+            }
+            if (line_len > 0) {
+              char *line_buf = malloc(line_len + 1);
+              if (line_buf) {
+                memcpy(line_buf, rt, line_len);
+                line_buf[line_len] = '\0';
+                char *tmp2 = strdup(line_buf);
                 if (tmp2) {
-                  char *tk2 = strtok(tmp2, "\t"); if (!tk2) tk2 = strtok(tmp2, " \t"); if (tk2) { tk2 = strtok(NULL, "\t"); if (!tk2) tk2 = strtok(NULL, " \t"); }
-                  if (tk2 && strcmp(tk2, remote) == 0) routes_count++;
+                  char *tk2 = strtok(tmp2, "\t");
+                  if (!tk2) tk2 = strtok(tmp2, " \t");
+                  if (tk2) {
+                    tk2 = strtok(NULL, "\t");
+                    if (!tk2) tk2 = strtok(NULL, " \t");
+                  }
+                  if (tk2 && strcmp(tk2, remote) == 0) {
+                    routes_count++;
+                  }
                   free(tmp2);
                 }
-                free(line2);
+                free(line_buf);
               }
             }
-            if (*lnend_rt == '\0') { break; } else { rt = lnend_rt + 1; }
+            if (*line_end == '\0') {
+              break;
+            }
+            rt = line_end + 1;
           }
         }
-        /* nodes: look for lastHopIP / lastHop JSON fragments or topology table lines
-         * We count unique destination IPs where lastHop == remote to approximate nodes.
+        /* nodes: look for lastHop / lastHopIP JSON fragments and topology table entries.
+         * We count occurrences plus unique destinations in topology table for best-effort accuracy.
          */
-        char pattern_lh[128]; snprintf(pattern_lh, sizeof(pattern_lh), "\"lastHopIP\":\"%s", remote);
-  sr = raw; safety = 0;
-        while ((sr = strstr(sr, pattern_lh)) && safety < 100000) { nodes_count++; sr += strlen(pattern_lh); safety++; }
+        char pat_lh[128];
+        char pat_lhip[128];
+        snprintf(pat_lh, sizeof(pat_lh), "\"lastHop\":\"%s", remote);
+        snprintf(pat_lhip, sizeof(pat_lhip), "\"lastHopIP\":\"%s", remote);
+        scan = raw;
+        guard = 0;
+        while ((scan = strstr(scan, pat_lh)) && guard < 100000) {
+          nodes_count++;
+          scan += strlen(pat_lh);
+          guard++;
+        }
+        scan = raw;
+        guard = 0;
+        while ((scan = strstr(scan, pat_lhip)) && guard < 100000) {
+          nodes_count++;
+          scan += strlen(pat_lhip);
+          guard++;
+        }
         /* topology table scan (Tab-separated: Dest. IP\tLast hop IP\t...) */
         const char *top_tbl = strstr(raw, "Table: Topology");
         if (top_tbl) {
           const char *tt = top_tbl;
-          const char *h2 = strchr(tt, '\n'); if (h2) tt = h2 + 1; else tt = tt + strlen(tt);
-          /* simple set of unique destinations per remote (cap small) */
-          char *uniq[512]; int ucnt = 0;
+          const char *header_end = strchr(tt, '\n');
+          if (header_end) {
+            tt = header_end + 1;
+          } else {
+            tt = tt + strlen(tt);
+          }
+          char *uniq[512];
+          int ucnt = 0;
+          memset(uniq, 0, sizeof(uniq));
           while (tt && *tt && strncmp(tt, "Table:", 6) != 0) {
-            const char *lnend_tt = strchr(tt, '\n'); if (!lnend_tt) lnend_tt = tt + strlen(tt);
-            size_t lsz2 = (size_t)(lnend - tt);
-            if (lsz2 > 0) {
-              char *line2 = malloc(lsz2 + 1);
-              if (line2) {
-                memcpy(line2, tt, lsz2); line2[lsz2] = '\0';
-                char *tmp2 = strdup(line2);
+            const char *line_end = strchr(tt, '\n');
+            if (!line_end) line_end = tt + strlen(tt);
+            size_t line_len = (size_t)(line_end - tt);
+            while (line_len > 0 && (tt[line_len - 1] == '\r' || tt[line_len - 1] == '\n')) {
+              line_len--;
+            }
+            if (line_len > 0) {
+              char *line_buf = malloc(line_len + 1);
+              if (line_buf) {
+                memcpy(line_buf, tt, line_len);
+                line_buf[line_len] = '\0';
+                char *tmp2 = strdup(line_buf);
                 if (tmp2) {
-                  /* fields: dest\tlastHop\t... */
-                  char *tk2 = strtok(tmp2, "\t"); char *destf = tk2; char *lhoff = NULL;
-                  if (tk2) { tk2 = strtok(NULL, "\t"); if (tk2) lhoff = tk2; }
+                  char *destf = strtok(tmp2, "\t");
+                  if (!destf) destf = strtok(tmp2, " \t");
+                  char *lhoff = NULL;
+                  if (destf) {
+                    lhoff = strtok(NULL, "\t");
+                    if (!lhoff) lhoff = strtok(NULL, " \t");
+                  }
                   if (destf && lhoff && strcmp(lhoff, remote) == 0) {
-                    /* ensure uniqueness */
-                    int dup = 0; for (int i=0;i<ucnt;i++) if (strcmp(uniq[i], destf) == 0) { dup = 1; break; }
-                    if (!dup && ucnt < (int)(sizeof(uniq)/sizeof(uniq[0]))) { uniq[ucnt++] = strdup(destf); }
+                    int dup = 0;
+                    for (int i = 0; i < ucnt; i++) {
+                      if (uniq[i] && strcmp(uniq[i], destf) == 0) {
+                        dup = 1;
+                        break;
+                      }
+                    }
+                    if (!dup && ucnt < (int)(sizeof(uniq) / sizeof(uniq[0]))) {
+                      uniq[ucnt++] = strdup(destf);
+                    }
                   }
                   free(tmp2);
                 }
-                free(line2);
+                free(line_buf);
               }
             }
-            if (*lnend_tt == '\0') { break; } else { tt = lnend_tt + 1; }
+            if (*line_end == '\0') {
+              break;
+            }
+            tt = line_end + 1;
           }
           nodes_count += ucnt;
-          for (int i=0;i<ucnt;i++) if (uniq[i]) free(uniq[i]);
+          for (int i = 0; i < ucnt; i++) {
+            if (uniq[i]) free(uniq[i]);
+          }
         }
       }
       if (!first) { json_buf_append(&buf,&len,&cap,","); } first = 0;
@@ -283,43 +349,74 @@ int normalize_olsrd_routes_plain(const char *raw, char **outbuf, size_t *outlen)
   size_t hdr_len = (size_t)(hdr_end - hdr_start);
   char *hdr = malloc(hdr_len + 1);
   if (!hdr) return -1;
-  memcpy(hdr, hdr_start, hdr_len); hdr[hdr_len] = '\0';
+  memcpy(hdr, hdr_start, hdr_len);
+  hdr[hdr_len] = '\0';
 
-  p = hdr_end; if (*p=='\n') p++;
-  size_t cap = 4096; size_t len = 0; char *buf = NULL;
-  json_buf_append(&buf,&len,&cap,"["); int first = 1;
+  p = hdr_end;
+  if (*p == '\n') p++;
+  size_t cap = 4096;
+  size_t len = 0;
+  char *buf = NULL;
+  json_buf_append(&buf, &len, &cap, "[");
+  int first = 1;
   while (*p && *p != '\0') {
     if (strncmp(p, "Table:", 6) == 0) break;
-    const char *lnend = strchr(p, '\n'); if (!lnend) lnend = p + strlen(p);
+    const char *lnend = strchr(p, '\n');
+    if (!lnend) lnend = p + strlen(p);
     size_t lsz = (size_t)(lnend - p);
-    if (lsz == 0 || (lsz==1 && p[0]=='\r')) { p = (*lnend=='\n') ? lnend+1 : lnend; continue; }
-    char *row = malloc(lsz+1); if (!row) break; memcpy(row, p, lsz); row[lsz]=0;
-    while (lsz > 0 && (row[lsz-1] == '\r' || row[lsz-1] == '\n')) { row[--lsz] = '\0'; }
-    char *fields[16]; int f = 0;
+    if (lsz == 0 || (lsz == 1 && p[0] == '\r')) {
+      p = (*lnend == '\n') ? lnend + 1 : lnend;
+      continue;
+    }
+    char *row = malloc(lsz + 1);
+    if (!row) break;
+    memcpy(row, p, lsz);
+    row[lsz] = '\0';
+    while (lsz > 0 && (row[lsz - 1] == '\r' || row[lsz - 1] == '\n')) {
+      row[--lsz] = '\0';
+    }
+    char *fields[16];
+    int f = 0;
     char *rtmp = row;
     char *tk = strtok(rtmp, "\t");
     if (!tk) tk = strtok(rtmp, " \t");
-    while (tk && f < (int)(sizeof(fields)/sizeof(fields[0]))) { fields[f++] = tk; tk = strtok(NULL, "\t"); if (!tk) tk = strtok(NULL, " \t"); }
+    while (tk && f < (int)(sizeof(fields) / sizeof(fields[0]))) {
+      fields[f++] = tk;
+      tk = strtok(NULL, "\t");
+      if (!tk) tk = strtok(NULL, " \t");
+    }
     if (f >= 5) {
       char *destination = fields[0];
       char *gateway = fields[1];
       char *metric = fields[2];
       char *etx = fields[3];
       char *interface = fields[4];
-      strip_tags_and_trim(destination); strip_tags_and_trim(gateway); strip_tags_and_trim(metric); strip_tags_and_trim(etx); strip_tags_and_trim(interface);
-      if (!first) json_buf_append(&buf,&len,&cap,",");
-      json_buf_append(&buf,&len,&cap,"{\"destination\":"); json_append_escaped(&buf,&len,&cap,destination?destination:"");
-      json_buf_append(&buf,&len,&cap,",\"gateway\":"); json_append_escaped(&buf,&len,&cap,gateway?gateway:"");
-      json_buf_append(&buf,&len,&cap,",\"metric\":"); json_append_escaped(&buf,&len,&cap,metric?metric:"");
-      json_buf_append(&buf,&len,&cap,",\"etx\":"); json_append_escaped(&buf,&len,&cap,etx?etx:"");
-      json_buf_append(&buf,&len,&cap,",\"interface\":"); json_append_escaped(&buf,&len,&cap,interface?interface:"");
-      json_buf_append(&buf,&len,&cap,"}");
+      strip_tags_and_trim(destination);
+      strip_tags_and_trim(gateway);
+      strip_tags_and_trim(metric);
+      strip_tags_and_trim(etx);
+      strip_tags_and_trim(interface);
+      if (!first) json_buf_append(&buf, &len, &cap, ",");
+      json_buf_append(&buf, &len, &cap, "{\"destination\":");
+      json_append_escaped(&buf, &len, &cap, destination ? destination : "");
+      json_buf_append(&buf, &len, &cap, ",\"gateway\":");
+      json_append_escaped(&buf, &len, &cap, gateway ? gateway : "");
+      json_buf_append(&buf, &len, &cap, ",\"metric\":");
+      json_append_escaped(&buf, &len, &cap, metric ? metric : "");
+      json_buf_append(&buf, &len, &cap, ",\"etx\":");
+      json_append_escaped(&buf, &len, &cap, etx ? etx : "");
+      json_buf_append(&buf, &len, &cap, ",\"interface\":");
+      json_append_escaped(&buf, &len, &cap, interface ? interface : "");
+      json_buf_append(&buf, &len, &cap, "}");
       first = 0;
     }
     free(row);
+    if (*lnend == '\0') {
+      break;
+    }
     p = lnend + 1;
   }
-  json_buf_append(&buf,&len,&cap,"]");
+  json_buf_append(&buf, &len, &cap, "]");
   *outbuf = buf;
   *outlen = len;
   if (hdr) free(hdr);
