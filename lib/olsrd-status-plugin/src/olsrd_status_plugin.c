@@ -4051,12 +4051,12 @@ static int h_status_lite(http_request_t *r) {
       if (strchr(ndbname, '.') != NULL) {
         char tmp[512];
         snprintf(tmp, sizeof(tmp), "%s.%s", def_hostname, ndbname);
-        snprintf(def_hostname, sizeof(def_hostname), "%s", tmp);
+  snprintf(def_hostname, sizeof(def_hostname), "%.*s", (int)(sizeof(def_hostname) - 1), tmp);
       } else {
         /* compose shorthost.canonical.site */
         char tmp[512];
         snprintf(tmp, sizeof(tmp), "%s.%s.wien.funkfeuer.at", def_hostname, ndbname);
-        snprintf(def_hostname, sizeof(def_hostname), "%s", tmp);
+  snprintf(def_hostname, sizeof(def_hostname), "%.*s", (int)(sizeof(def_hostname) - 1), tmp);
       }
       def_hostname[sizeof(def_hostname) - 1] = '\0';
     }
