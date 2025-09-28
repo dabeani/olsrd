@@ -1746,6 +1746,131 @@ static void heuristic_count_ips_in_raw(const char *raw, unsigned long *out_nodes
   free(uniq);
 }
 
+static int normalize_olsrd_links(const char *raw, char **outbuf, size_t *outlen);
+int normalize_olsrd_links_plain(const char *raw, char **outbuf, size_t *outlen);
+
+/* Shared helper: derive OLSR route/node counts from raw collector snapshots or
+ * HTTP dumps. Handles normalized JSON, legacy plain-text tables, and heuristic
+ * fallbacks so lightweight endpoints can surface non-zero counts without
+ * issuing additional network probes. When update_metrics is non-zero the
+ * METRIC_SET_UNIQUE macro is invoked to persist the derived counts for other
+ * handlers.
+ */
+static void compute_olsr_counts_from_snapshots(const char *links_raw, size_t links_len,
+                                               const char *routes_raw, size_t routes_len,
+                                               const char *topology_raw, size_t topology_len,
+                                               unsigned long *routes_out, unsigned long *nodes_out,
+                                               int update_metrics) {
+  if (!routes_out || !nodes_out) return;
+  unsigned long routes = routes_out ? *routes_out : 0;
+  unsigned long nodes = nodes_out ? *nodes_out : 0;
+
+  unsigned long direct_routes_count = 0;
+  if (routes_raw && routes_len > 0) {
+    const char *pr = routes_raw;
+    while ((pr = strstr(pr, "\"destination\"")) != NULL) {
+      direct_routes_count++;
+      pr += 13; /* advance past token to avoid infinite loop */
+    }
+  }
+
+  size_t combined_len = 1; /* nul terminator */
+  if (links_raw && links_len) combined_len += links_len + 1;
+  if (routes_raw && routes_len) combined_len += routes_len + 1;
+  if (topology_raw && topology_len) combined_len += topology_len + 1;
+
+  char *combined = NULL;
+  if (combined_len > 1) {
+    combined = malloc(combined_len);
+    if (combined) {
+      size_t off = 0;
+      if (links_raw && links_len) {
+        memcpy(combined + off, links_raw, links_len);
+        off += links_len;
+        combined[off++] = '\n';
+      }
+      if (routes_raw && routes_len) {
+        memcpy(combined + off, routes_raw, routes_len);
+        off += routes_len;
+        combined[off++] = '\n';
+      }
+      if (topology_raw && topology_len) {
+        memcpy(combined + off, topology_raw, topology_len);
+        off += topology_len;
+        combined[off++] = '\n';
+      }
+      combined[off] = '\0';
+    }
+  }
+
+  int have_counts = 0;
+  char *norm = NULL; size_t nn = 0;
+  if (combined && combined[0]) {
+    if (normalize_olsrd_links(combined, &norm, &nn) != 0 || !norm || nn == 0) {
+      if (norm) { free(norm); norm = NULL; nn = 0; }
+      if (normalize_olsrd_links_plain(combined, &norm, &nn) != 0 || !norm || nn == 0) {
+        if (norm) { free(norm); norm = NULL; nn = 0; }
+      }
+    }
+    if (norm && nn > 0) {
+      unsigned long sum_routes = 0, sum_nodes = 0;
+      const char *p = norm;
+      while ((p = strstr(p, "\"routes\":")) != NULL) {
+        p += 9;
+        while (*p && (*p == ' ' || *p == '"' || *p == '\\' || *p == ':')) p++;
+        sum_routes += strtoul(p, NULL, 10);
+      }
+      p = norm;
+      while ((p = strstr(p, "\"nodes\":")) != NULL) {
+        p += 8;
+        while (*p && (*p == ' ' || *p == '"' || *p == '\\' || *p == ':')) p++;
+        sum_nodes += strtoul(p, NULL, 10);
+      }
+      if (sum_routes > 0 || sum_nodes > 0) {
+        routes = sum_routes;
+        nodes = sum_nodes;
+        if (routes == 0 && direct_routes_count > 0) {
+          routes = direct_routes_count;
+        }
+        have_counts = 1;
+      }
+    }
+
+    if (!have_counts) {
+      unsigned long h_nodes = 0, h_routes = 0;
+      heuristic_count_ips_in_raw(combined, &h_nodes, &h_routes);
+      if (h_nodes > 0 || h_routes > 0) {
+        routes = h_routes;
+        nodes = h_nodes;
+        have_counts = 1;
+      }
+    }
+
+    if (!have_counts && direct_routes_count > 0) {
+      routes = direct_routes_count;
+      have_counts = 1;
+    }
+  } else if (direct_routes_count > 0) {
+    routes = direct_routes_count;
+    have_counts = 1;
+  }
+
+  if (update_metrics && have_counts) {
+    METRIC_SET_UNIQUE(routes, nodes);
+  }
+
+  if (g_log_request_debug) {
+    fprintf(stderr, "[status-plugin] compute_olsr_counts_from_snapshots: routes=%lu nodes=%lu direct=%lu update_metrics=%d have_counts=%d\n",
+            routes, nodes, direct_routes_count, update_metrics, have_counts);
+  }
+
+  if (routes_out) *routes_out = routes;
+  if (nodes_out) *nodes_out = nodes;
+
+  if (norm) free(norm);
+  if (combined) free(combined);
+}
+
 /* Minimal ARP enrichment: look up MAC and reverse DNS for IPv4 */
 static void __attribute__((unused)) arp_enrich_ip(const char *ip, char *mac_out, size_t mac_len, char *host_out, size_t host_len) {
   if (mac_out && mac_len) mac_out[0] = '\0';
@@ -4414,80 +4539,12 @@ static int h_status_lite(http_request_t *r) {
         abuf_free(&tab);
       }
       if (have_any) {
-        size_t clen = l1 + l2 + l3 + 8;
-        char *combined = malloc(clen);
-        if (combined) {
-          size_t off = 0;
-          if (links_raw && l1) { memcpy(combined + off, links_raw, l1); off += l1; }
-          if (routes_raw && l2) { combined[off++] = '\n'; memcpy(combined + off, routes_raw, l2); off += l2; }
-          if (topology_raw && l3) { combined[off++] = '\n'; memcpy(combined + off, topology_raw, l3); off += l3; }
-          combined[off] = '\0';
-          /* Fast-path: if we have a raw routes snapshot, count destinations there
-           * (many olsrd setups produce a plain routes dump that is more reliable
-           * for counting destinations than the multi-stage normalization). We'll
-           * still try normalization afterwards for richer per-neighbor metrics,
-           * but prefer a positive direct count from routes_raw when available.
-           */
-          char *norm = NULL; size_t nn = 0;
-          unsigned long direct_routes_count = 0;
-          if (routes_raw && l2 > 0) {
-            const char *pr = routes_raw;
-            /* count occurrences of a destination JSON key ("destination") as
-             * a fast proxy for number of routes present in the raw dump */
-            while ((pr = strstr(pr, "\"destination\"")) != NULL) { direct_routes_count++; pr++; }
-          }
-
-          if ((normalize_olsrd_links(combined, &norm, &nn) == 0 && norm && nn > 0) ||
-              (normalize_olsrd_links_plain(combined, &norm, &nn) == 0 && norm && nn > 0)) {
-            unsigned long sum_routes = 0, sum_nodes = 0;
-            const char *p2 = norm;
-            while ((p2 = strstr(p2, "\"routes\":")) != NULL) {
-              p2 += 9; while (*p2 && (*p2 == ' ' || *p2 == '"' || *p2 == '\\' || *p2 == ':' )) p2++; sum_routes += strtoul(p2, NULL, 10);
-            }
-            p2 = norm;
-            while ((p2 = strstr(p2, "\"nodes\":")) != NULL) {
-              p2 += 8; while (*p2 && (*p2 == ' ' || *p2 == '"' || *p2 == '\\' || *p2 == ':' )) p2++; sum_nodes += strtoul(p2, NULL, 10);
-            }
-            /* If normalization produced useful counts, use them. If routes are
-             * zero but we counted a positive number from the raw routes snapshot,
-             * prefer the direct count (avoids undercounting when normalization
-             * simplifies/aggregates routes). */
-            if (sum_routes > 0 || sum_nodes > 0) {
-              olsr_routes = sum_routes;
-              olsr_nodes = sum_nodes;
-              if (olsr_routes == 0 && direct_routes_count > 0) olsr_routes = direct_routes_count;
-              METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
-            } else {
-              unsigned long h_nodes = 0, h_routes = 0;
-              heuristic_count_ips_in_raw(combined, &h_nodes, &h_routes);
-              /* if heuristics found something, use it; otherwise fall back to
-               * direct route count if available */
-              if (h_nodes > 0 || h_routes > 0) {
-                olsr_routes = h_routes; olsr_nodes = h_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
-                if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: heuristic counts applied nodes=%lu routes=%lu\n", h_nodes, h_routes);
-              } else if (direct_routes_count > 0) {
-                olsr_routes = direct_routes_count;
-                /* keep olsr_nodes as-is (heuristics didn't find nodes) */
-                METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
-              }
-            }
-          } else {
-            /* Normalization failed: prefer heuristics but fall back to direct
-             * routes count from the raw snapshot if present. */
-            unsigned long h_nodes = 0, h_routes = 0; heuristic_count_ips_in_raw(combined, &h_nodes, &h_routes);
-            if (h_nodes > 0 || h_routes > 0) {
-              olsr_routes = h_routes; olsr_nodes = h_nodes; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
-              if (g_log_request_debug) fprintf(stderr, "[status-plugin] h_status_lite: heuristic counts (no norm) nodes=%lu routes=%lu\n", h_nodes, h_routes);
-            } else if (direct_routes_count > 0) {
-              olsr_routes = direct_routes_count; METRIC_SET_UNIQUE(olsr_routes, olsr_nodes);
-            }
-          }
-          /* Intentionally do NOT mix OLSR2 counts into OLSRd (v1) statistics.
-           * OLSR and OLSR2 are separate protocols and their metrics should
-           * not overwrite each other. */
-          if (norm) free(norm);
-          free(combined);
-        }
+        unsigned long derived_routes = olsr_routes;
+        unsigned long derived_nodes = olsr_nodes;
+        compute_olsr_counts_from_snapshots(links_raw, l1, routes_raw, l2, topology_raw, l3,
+                                           &derived_routes, &derived_nodes, 1);
+        olsr_routes = derived_routes;
+        olsr_nodes = derived_nodes;
       }
       if (links_raw) free(links_raw);
       if (routes_raw) free(routes_raw);
@@ -4965,6 +5022,7 @@ static int h_status_stats(http_request_t *r) {
     char *links_raw = NULL;
     char *routes_raw = NULL;
     char *topology_raw = NULL;
+    size_t links_len = 0, routes_len = 0, topology_len = 0;
     /* Collect from in-memory core implementation */
     {
       struct autobuf ab;
@@ -4972,7 +5030,7 @@ static int h_status_stats(http_request_t *r) {
         status_collect_links(&ab);
         if (ab.len > 0) {
           links_raw = malloc(ab.len + 1);
-          if (links_raw) { memcpy(links_raw, ab.buf, ab.len); links_raw[ab.len] = '\0'; }
+          if (links_raw) { memcpy(links_raw, ab.buf, ab.len); links_raw[ab.len] = '\0'; links_len = ab.len; }
         }
         abuf_free(&ab);
       }
@@ -4983,7 +5041,7 @@ static int h_status_stats(http_request_t *r) {
         status_collect_routes(&ab);
         if (ab.len > 0) {
           routes_raw = malloc(ab.len + 1);
-          if (routes_raw) { memcpy(routes_raw, ab.buf, ab.len); routes_raw[ab.len] = '\0'; }
+          if (routes_raw) { memcpy(routes_raw, ab.buf, ab.len); routes_raw[ab.len] = '\0'; routes_len = ab.len; }
         }
         abuf_free(&ab);
       }
@@ -4994,43 +5052,19 @@ static int h_status_stats(http_request_t *r) {
         status_collect_topology(&ab);
         if (ab.len > 0) {
           topology_raw = malloc(ab.len + 1);
-          if (topology_raw) { memcpy(topology_raw, ab.buf, ab.len); topology_raw[ab.len] = '\0'; }
+          if (topology_raw) { memcpy(topology_raw, ab.buf, ab.len); topology_raw[ab.len] = '\0'; topology_len = ab.len; }
         }
         abuf_free(&ab);
       }
     }
     if (links_raw || routes_raw || topology_raw) {
-      /* combine similarly to full status path */
-      size_t clen = (links_raw?strlen(links_raw):0) + (routes_raw?strlen(routes_raw):0) + (topology_raw?strlen(topology_raw):0) + 8;
-      char *combined = malloc(clen+1);
-      if (combined) {
-        combined[0]=0;
-        if (links_raw) { strncat(combined, links_raw, clen); strncat(combined, "\n", clen); }
-        if (routes_raw) { strncat(combined, routes_raw, clen); strncat(combined, "\n", clen); }
-        if (topology_raw) { strncat(combined, topology_raw, clen); strncat(combined, "\n", clen); }
-        char *norm = NULL; size_t nn = 0;
-        if (normalize_olsrd_links(combined, &norm, &nn) == 0 && norm && nn>0) {
-          /* crude parse: sum all occurrences of "\"routes\":\"NUM\"" and "\"nodes\":\"NUM\"" */
-          unsigned long sum_routes = 0, sum_nodes = 0;
-          const char *p = norm;
-          while ((p = strstr(p, "\"routes\":")) != NULL) {
-            p += 9; /* skip \"routes\": */
-            while (*p && (*p == ' ' || *p == '"' || *p == '\\' || *p==':' )) p++;
-            sum_routes += strtoul(p, NULL, 10);
-          }
-          p = norm;
-          while ((p = strstr(p, "\"nodes\":")) != NULL) {
-            p += 8;
-            while (*p && (*p == ' ' || *p == '"' || *p == '\\' || *p==':' )) p++;
-            sum_nodes += strtoul(p, NULL, 10);
-          }
-          if (sum_routes > 0 || sum_nodes > 0) {
-            olsr_routes = sum_routes; olsr_nodes = sum_nodes;
-          }
-        }
-        if (norm) free(norm);
-        free(combined);
-      }
+      unsigned long derived_routes = olsr_routes;
+      unsigned long derived_nodes = olsr_nodes;
+      compute_olsr_counts_from_snapshots(links_raw, links_len, routes_raw, routes_len,
+                                         topology_raw, topology_len,
+                                         &derived_routes, &derived_nodes, 1);
+      olsr_routes = derived_routes;
+      olsr_nodes = derived_nodes;
     }
     if (links_raw) free(links_raw);
     if (routes_raw) free(routes_raw);
