@@ -4038,6 +4038,30 @@ static int h_status_lite(http_request_t *r) {
     }
   }
 
+  /* If the reverse/lookup returned a short host (no dot), try to enrich it
+   * using the cached nodedb. Prefer a canonical nodedb name (which may
+   * include a domain). If that still looks short, compose a sensible FQDN
+   * using the pattern <short-host>.<canonical-node>.wien.funkfeuer.at so the
+   * UI can consistently show fullname entries instead of bare device names.
+   */
+  if (def_hostname[0] && strchr(def_hostname, '.') == NULL) {
+    char ndbname[256] = "";
+  if (lookup_hostname_from_nodedb(def_ip, ndbname, sizeof(ndbname)) == 0 && ndbname[0]) {
+      /* If the nodedb-provided name already contains a dot, append it directly. */
+      if (strchr(ndbname, '.') != NULL) {
+        char tmp[512];
+        snprintf(tmp, sizeof(tmp), "%s.%s", def_hostname, ndbname);
+        snprintf(def_hostname, sizeof(def_hostname), "%s", tmp);
+      } else {
+        /* compose shorthost.canonical.site */
+        char tmp[512];
+        snprintf(tmp, sizeof(tmp), "%s.%s.wien.funkfeuer.at", def_hostname, ndbname);
+        snprintf(def_hostname, sizeof(def_hostname), "%s", tmp);
+      }
+      def_hostname[sizeof(def_hostname) - 1] = '\0';
+    }
+  }
+
   APP_L("\"default_route\":{");
   APP_L("\"ip\":"); json_append_escaped(&buf,&len,&cap,def_ip);
   APP_L(",\"dev\":"); json_append_escaped(&buf,&len,&cap,def_dev);
