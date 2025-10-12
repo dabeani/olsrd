@@ -48,7 +48,6 @@ else
 	echo "[warn] static curl was not found at $CURL_INSTALL/bin/curl; skipping copy"
 fi
 
-
 # copy plugin libraries using the shared helper
 cp lib/httpinfo/olsrd_* /olsrd-output/$ARCH/usr/lib/
 cp lib/txtinfo/olsrd_* /olsrd-output/$ARCH/usr/lib/
