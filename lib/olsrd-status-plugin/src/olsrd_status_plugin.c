@@ -6958,8 +6958,6 @@ static int h_traceroute(http_request_t *r) {
   return 0;
 }
 
-
-
 static int h_embedded_appjs(http_request_t *r) {
   if (http_send_file(r, g_asset_root, "js/app.js", NULL) != 0) {
     /* Fallback: serve minimal JavaScript for debugging */
