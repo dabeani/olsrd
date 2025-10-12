@@ -8,6 +8,7 @@ echo "--- redirect to tmp logfile!"
 echo "Environment variables:"
 env
 
+
 # Detect base interface (first non-loopback)
 BASE_IFACE="$(ls /sys/class/net/ | grep -v '^lo$' | head -n 1)"
 echo "Detected base interface: $BASE_IFACE"

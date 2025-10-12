@@ -2,6 +2,7 @@
 # Combined OLSRd (IPv4) and OLSRd2 (IPv6) init script for Mikrotik container
 # Copyright (C) 2021-2025 FreiesNetz.at & Bernhard Marker
 
+
 set -eu
 
 # --- Debugging/Logging ---

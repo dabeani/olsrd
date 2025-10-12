@@ -5,6 +5,7 @@ echo "Starting OLSRd Docker container for Mikrotik RouterOS..."
 /bin/busybox uname -a
 echo "---"
 
+
 DOCKER_ASSIGNED_IP=$(ip -4 addr show eth0 | sed -n 's/.*inet \([^ ]*\).*/\1/p')
 
 # --- VLAN setup + OLSRD_IP assignment (POSIX/ash) -----------------------------
