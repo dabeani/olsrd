@@ -46,10 +46,14 @@ cp olsrd /olsrd-output/$ARCH/usr/sbin/
 # curl binary is copied into the output image at usr/bin. Cross-toolchain
 # environment variables (CC, AR) are used above.
 BUILD_EXTERNAL_DIR="$REPO_ROOT/build_external"
+EXTERNAL_DIR="$REPO_ROOT/lib/extern"
 MBEDTLS_REPO="https://github.com/ARMmbed/mbedtls.git"
+# Prefer submodule path under lib/extern if present, otherwise fall back to build_external
+MBEDTLS_SUBDIR="$EXTERNAL_DIR/mbedtls"
 MBEDTLS_DIR="$BUILD_EXTERNAL_DIR/mbedtls"
 MBEDTLS_INSTALL="$BUILD_EXTERNAL_DIR/install/mbedtls"
 CURL_REPO="https://github.com/curl/curl.git"
+CURL_SUBDIR="$EXTERNAL_DIR/curl"
 CURL_DIR="$BUILD_EXTERNAL_DIR/curl"
 CURL_INSTALL="$BUILD_EXTERNAL_DIR/install/curl"
 
@@ -57,6 +61,17 @@ export RANLIB=${RANLIB:-arm-linux-ranlib}
 export STRIP=${STRIP:-arm-linux-strip}
 
 mkdir -p "$BUILD_EXTERNAL_DIR"
+mkdir -p "$EXTERNAL_DIR"
+
+# If submodule directories exist use them directly (recommended workflow with git submodules)
+if [ -d "$MBEDTLS_SUBDIR" ]; then
+	echo "[info] using mbedTLS from submodule: $MBEDTLS_SUBDIR"
+	MBEDTLS_DIR="$MBEDTLS_SUBDIR"
+fi
+if [ -d "$CURL_SUBDIR" ]; then
+	echo "[info] using curl from submodule: $CURL_SUBDIR"
+	CURL_DIR="$CURL_SUBDIR"
+fi
 
 echo "[info] Building mbedTLS and static curl for $ARCH (this may take a while)"
 # clone repos if needed
