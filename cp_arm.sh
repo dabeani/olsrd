@@ -64,23 +64,24 @@ mkdir -p "$BUILD_EXTERNAL_DIR"
 mkdir -p "$EXTERNAL_DIR"
 
 # If submodule directories exist use them directly (recommended workflow with git submodules)
+
 if [ -d "$MBEDTLS_SUBDIR" ]; then
 	echo "[info] using mbedTLS from submodule: $MBEDTLS_SUBDIR"
 	MBEDTLS_DIR="$MBEDTLS_SUBDIR"
+else
+	echo "[error] required submodule lib/extern/mbedtls not found. Please run: git submodule update --init --recursive" >&2
+	exit 1
 fi
 if [ -d "$CURL_SUBDIR" ]; then
 	echo "[info] using curl from submodule: $CURL_SUBDIR"
 	CURL_DIR="$CURL_SUBDIR"
+else
+	echo "[error] required submodule lib/extern/curl not found. Please run: git submodule update --init --recursive" >&2
+	exit 1
 fi
 
 echo "[info] Building mbedTLS and static curl for $ARCH (this may take a while)"
-# clone repos if needed
-if [ ! -d "$MBEDTLS_DIR" ]; then
-	git clone --depth 1 "$MBEDTLS_REPO" "$MBEDTLS_DIR"
-fi
-if [ ! -d "$CURL_DIR" ]; then
-	git clone --depth 1 "$CURL_REPO" "$CURL_DIR"
-fi
+# submodules are required and already located at MBEDTLS_DIR and CURL_DIR
 
 # Build mbedTLS (prefer cmake if available, fallback to Makefile)
 pushd "$MBEDTLS_DIR" >/dev/null || exit 1
