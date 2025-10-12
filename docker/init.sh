@@ -15,6 +15,9 @@ fi
 
 echo "Starting Mikrotik OLSRd/OLSRd2 Docker container..."
 /bin/busybox uname -a
+ip addr show
+ip addr
+ifconfig
 echo "Environment variables:"
 env
 
