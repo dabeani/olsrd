@@ -26,7 +26,7 @@ RUN_OLSRD2="${RUN_OLSRD2:-1}"
 BASE_IFACE="$(ls /sys/class/net/ | grep -v '^lo$' | head -n 1)"
 echo "Detected base interface: $BASE_IFACE"
 
-DOCKER_ASSIGNED_IP=$(ip -4 addr show eth0 | sed -n 's/.*inet \([^ ]*\).*/\1/p')
+DOCKER_ASSIGNED_IP=$(ip -4 addr show $BASE_IFACE | sed -n 's/.*inet \([^ ]*\).*/\1/p')
 
 # --- VLAN/IP Assignment Helpers (POSIX) ---
 add_vlan() {
@@ -425,10 +425,10 @@ EOL
 # --- OLSRd (IPv4) Setup ---
 if [ "$RUN_OLSRD" = "1" ]; then
   if [ -n "${OLSRD_IP:-}" ]; then
-    echo "Remove Docker-assigned IP address from eth0."
-    ip addr del $DOCKER_ASSIGNED_IP dev eth0 || true
-    echo "Add IP $OLSRD_IP from environment variable OLSRD_IP to eth0 as main IP."
-    ip addr add $OLSRD_IP dev eth0
+    echo "Remove Docker-assigned IP address from $BASE_IFACE."
+    ip addr del $DOCKER_ASSIGNED_IP dev $BASE_IFACE || true
+    echo "Add IP $OLSRD_IP from environment variable OLSRD_IP to $BASE_IFACE as main IP."
+    ip addr add $OLSRD_IP dev $BASE_IFACE
   fi
 fi
 
@@ -438,7 +438,7 @@ setup_vlans
 # --- OLSRd2 (IPv6) Setup ---
 if [ "$RUN_OLSRD2" = "1" ]; then
   # Assign Funkfeuer IPv6 to lo
-  funkfeuer_ipv6="$(generate_funkfeuer_eui64_ipv6 "eth0")"
+  funkfeuer_ipv6="$(generate_funkfeuer_eui64_ipv6 "$BASE_IFACE")"
   ip -6 addr flush dev lo 2>/dev/null || true
   ip -6 addr add "$funkfeuer_ipv6" dev lo 2>/dev/null && echo "[ipv6] lo: set $funkfeuer_ipv6"
   if ! ip -6 addr show dev lo | grep -q '::1/128'; then
@@ -456,10 +456,10 @@ fi
 
 # --- Restore Docker-assigned IP after all setup (so container stays reachable) ---
 if [ "$RUN_OLSRD" = "1" ] && [ -n "${OLSRD_IP:-}" ]; then
-  echo "Add Docker-assigned IP address back to eth0 as secondary IP."
-  ip addr add $DOCKER_ASSIGNED_IP dev eth0
-  echo "Show current configuration of eth0:"
-  ip addr show eth0
+  echo "Add Docker-assigned IP address back to $BASE_IFACE as secondary IP."
+  ip addr add $DOCKER_ASSIGNED_IP dev $BASE_IFACE
+  echo "Show current configuration of $BASE_IFACE:"
+  ip addr show $BASE_IFACE
 fi
 
 # --- Socat tunnels (OLSRd only, unchanged) ---
