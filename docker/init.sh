@@ -23,7 +23,7 @@ RUN_OLSRD2="${RUN_OLSRD2:-1}"
 
 # --- Utility: Find base interface ---
 #BASE_IFACE="$(ls /sys/class/net/ | grep -v '^lo$' | head -n 1)"
-BASE_IFACE="$(cat /proc/net/dev | grep -v 'Inter-' | grep -v 'packets' | grep -v 'lo' | awk -F: '{print $1}' | tr -d ' ')"
+BASE_IFACE="$(cat /proc/net/dev | grep -v 'Inter-' | grep -v 'packets' | grep -v 'lo' | grep -v '\.' | awk -F: '{print $1}' | tr -d ' ')"
 echo "Detected base interface: $BASE_IFACE"
 
 DOCKER_ASSIGNED_IP=$(ip -4 addr show $BASE_IFACE | sed -n 's/.*inet \([^ ]*\).*/\1/p')
