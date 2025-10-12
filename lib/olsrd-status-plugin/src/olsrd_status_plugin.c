@@ -4433,15 +4433,24 @@ static int h_status_lite(http_request_t *r) {
     char ndbname[256] = "";
   if (lookup_hostname_from_nodedb(def_ip, ndbname, sizeof(ndbname)) == 0 && ndbname[0]) {
       /* If the nodedb-provided name already contains a dot, append it directly. */
-      if (strchr(ndbname, '.') != NULL) {
+      {
         char tmp[512];
-        snprintf(tmp, sizeof(tmp), "%s.%s", def_hostname, ndbname);
-  snprintf(def_hostname, sizeof(def_hostname), "%.*s", (int)(sizeof(def_hostname) - 1), tmp);
-      } else {
-        /* compose shorthost.canonical.site */
-        char tmp[512];
-        snprintf(tmp, sizeof(tmp), "%s.%s.wien.funkfeuer.at", def_hostname, ndbname);
-  snprintf(def_hostname, sizeof(def_hostname), "%.*s", (int)(sizeof(def_hostname) - 1), tmp);
+        /* Build tmp safely using bounded copies and concatenations to avoid
+         * -Wformat-truncation warnings from snprintf when inputs are long.
+         */
+        tmp[0] = '\0';
+        /* copy base host */
+        strncpy(tmp, def_hostname, sizeof(tmp) - 1);
+        tmp[sizeof(tmp) - 1] = '\0';
+        /* append a dot and the nodedb name (both bounded) */
+        strncat(tmp, ".", sizeof(tmp) - strlen(tmp) - 1);
+        strncat(tmp, ndbname, sizeof(tmp) - strlen(tmp) - 1);
+        /* if ndbname has no dot, append the canonical site suffix */
+        if (strchr(ndbname, '.') == NULL) {
+          strncat(tmp, ".wien.funkfeuer.at", sizeof(tmp) - strlen(tmp) - 1);
+        }
+        /* copy the safely-built tmp into def_hostname with truncation */
+        snprintf(def_hostname, sizeof(def_hostname), "%.*s", (int)(sizeof(def_hostname) - 1), tmp);
       }
       def_hostname[sizeof(def_hostname) - 1] = '\0';
     }
