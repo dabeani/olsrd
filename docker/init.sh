@@ -18,6 +18,7 @@ echo "Starting Mikrotik OLSRd/OLSRd2 Docker container..."
 ip addr show
 ip addr
 ifconfig
+cat /proc/net/dev
 echo "Environment variables:"
 env
 
