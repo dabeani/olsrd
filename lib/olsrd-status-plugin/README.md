@@ -601,6 +601,127 @@ This behavior is best-effort and non-fatal: missing fields will be shown as `-` 
 * Endpoint intentionally unauthenticated for embedded deployment simplicity; place behind firewall or restrict `bind` to management network if needed.
 * All parsing is defensive with bounds checks; malformed upstream JSON will degrade gracefully (empty arrays / zero counts) rather than crash.
 
+VLANs (docker/init.sh)
+-----------------------
+
+This repo contains a `docker/init.sh` helper script used by container images to prepare VLAN subinterfaces and assign IPv4/IPv6 addresses before starting OLSRd/OLSRd2. The plugin README documents the `vlans` environment variable syntax here for operators who run the plugin inside those container images.
+
+Summary
+~~~~~~~
+
+    - `vlans` is a whitespace-separated list of tokens. Each token describes one or more VLAN IDs and optional comma-separated IP assignments.
+    - Token form: `ID_OR_RANGE[,ADDR[,ADDR...]]` where `ID_OR_RANGE` is either a single VLAN ID (e.g. `100`) or a range `START-END` (e.g. `100-105`).
+    - Addresses may be IPv4 or IPv6 in CIDR notation (e.g. `192.0.2.1/24` or `2001:db8::1/64`). Addresses containing `:` are treated as IPv6.
+
+Parsing & behavior details
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Tokens are split on whitespace (POSIX shell word splitting). Within a token commas separate the VLAN id/range from address fields.
+- Ranges expand inclusively. Non-numeric or out-of-range values are skipped and VLAN IDs are clamped to 1..4094.
+- After expansion, the script sorts and uniques the VLAN list, then enforces `MAX_VLAN_COUNT` (default 128), keeping the first N entries.
+- For each VLAN subinterface the init script will:
+    - Create the subinterface (via `ip link add link <parent> name <parent>.<id> type vlan id <id>` or fallback to `vconfig`).
+    - Flush existing IPv4/IPv6 addresses on that subinterface.
+    - Assign each IPv4/IPv6 address specified in the token to every expanded VLAN ID for that token.
+- If no IPv6 address is provided for an interface and `RUN_OLSRD2=1`, the script generates and assigns a link-local EUI-64 IPv6 address derived from the interface MAC.
+
+Examples
+~~~~~~~~
+
+- Single VLAN, IPv4:
+
+    vlans="10,192.168.10.1/24"
+
+- VLAN range assigned the same IPv4:
+
+    vlans="100-105,10.0.100.1/24"
+
+- Mixed IPv4 and IPv6 on a VLAN:
+
+    vlans="200,192.168.200.1/24,2001:db8::1/64"
+
+- Multiple tokens with ranges and single IDs:
+
+    vlans="100-101,192.168.100.1/24 200,192.168.200.1/24,2001:db8::1/64 300"
+
+- Multiple IPv4 addresses for one VLAN (comma-separated addresses):
+
+    vlans="120,192.0.2.1/24,198.51.100.5/24"
+
+Notes and recommendations
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Use conservative `MAX_VLAN_COUNT` when running on constrained systems; default is 128.
+- Be careful with shell quoting when placing this variable on a `docker run` command line; prefer a small env file for complex token lists.
+- The init script temporarily removes the Docker-assigned IPv4 from `eth0` when `OLSRD_IP` is set and re-adds it at the end so the container remains reachable during setup — be mindful of network reachability during startup.
+
+MikroTik RouterOS container examples
+-----------------------------------
+
+Below are two real-world MikroTik RouterOS container environment examples (Router1 and Router2). These show how to set container env vars in RouterOS and how the `docker/init.sh` script will interpret them. Values are shown exactly as provided and must not be changed; the explanations only describe their meaning.
+
+Router1 (env list name `olsrd_bcrc1`):
+
+```
+/container envs
+add key=OLSRD_IP name=olsrd_bcrc1 value=193.238.158.170/32
+add key=OLSRD_LQMULT name=olsrd_bcrc1 value="193.238.158.38:1.0 78.41.118.73:1.0 193.238.158.74:1.0 193.238.158.153:1.0"
+add key=OLSRD_HTTPINFO_PORT name=olsrd_bcrc1 value=1979
+add key=OLSRD_HTTPINFO_ALLOW_NET name=olsrd_bcrc1 value="78.41.112.0/255.255.248.0  90.152.192.26/255.255.255.255 193.238.156.0/255.255.252.0 78.41.115.96/255.255.255.248"
+add key=SOCAT_TUNNELS name=olsrd_bcrc1 value=3000:172.30.99.3:3000
+add key=OLSRD_HNA4 name=olsrd_bcrc1 value=\
+    "193.238.158.8/255.255.255.255/eth0.999 193.238.158.227/255.255.255.255/eth0.999 193.238.158.251/255.255.255.255/eth0.999 78.41.118.72/255.255.255.248/eth0.999"
+add key=INTERFACES name=olsrd_bcrc1 value=eth0
+add key=vlans name=olsrd_bcrc1 value="101 102 103,193.238.158.107/32 104-108 109,193.238.158.107/32 999,193.238.158.170/32,78.41.118.73/29"
+add key=OLSRD_STATUS_PLUGIN name=olsrd_bcrc1 value=1
+add key=OLSRD_STATUS_PLUGIN_PORT name=olsrd_bcrc1 value=80
+add key=OLSRD_STATUS_PLUGIN_NET name=olsrd_bcrc1 value="193.238.156.0/22 78.41.112.0/21 90.152.192.26/32"
+```
+
+Explanation (Router1 variables):
+- `OLSRD_IP=193.238.158.170/32`: main IPv4 address assigned to the container's primary interface; used as `MainIp` in generated `olsrd.conf`.
+- `OLSRD_LQMULT`: space-separated list of `ip:mult` tokens — each produces a `LinkQualityMult` line in `olsrd.conf` to adjust link-quality weighting for those peers.
+- `OLSRD_HTTPINFO_PORT=1979`: port for the `olsrd_httpinfo` plugin.
+- `OLSRD_HTTPINFO_ALLOW_NET`: list of accept networks for `httpinfo` plugin; each token is `ip/mask` or `ip/maskbits` and will be written as `PlParam "Net"` entries.
+- `SOCAT_TUNNELS=3000:172.30.99.3:3000`: a socat tunnel mapping local listen port 3000 to 172.30.99.3:3000 (the init script starts `socat` for each entry).
+- `OLSRD_HNA4`: HNA4 entries (ip/mask/interface) — the script will add corresponding routes and write Hna4 lines into `olsrd.conf`.
+- `INTERFACES=eth0`: explicit interface list used by `generate_olsrd_conf` for the `Interface` stanza (if provided).
+- `vlans="101 102 103,193.238.158.107/32 104-108 109,193.238.158.107/32 999,193.238.158.170/32,78.41.118.73/29"`: complex `vlans` token set — see VLANs section above; it will create VLAN subinterfaces (e.g. `eth0.101`, `eth0.102`, `eth0.103`, `eth0.104`..`eth0.108`, etc.) and assign the listed IPv4/IPv6 addresses to the respective VLAN interfaces.
+- `OLSRD_STATUS_PLUGIN=1` and related `OLSRD_STATUS_PLUGIN_PORT=80` and `OLSRD_STATUS_PLUGIN_NET`: enable the status plugin and expose it on port 80 with the listed allow-list networks.
+
+Router2 (env list name `olsrd`):
+
+```
+/container envs
+add key=OLSRD_HNA4 list=olsrd value="193.238.158.3/255.255.255.255 193.238.159.248/255.255.255.255"
+add key=OLSRD_HTTPINFO_ALLOW_NET list=olsrd value="78.41.112.0/255.255.248.0  90.152.192.26/255.255.255.255 193.238.156.0/255.255.252.0"
+add key=OLSRD_HTTPINFO_PORT list=olsrd value=1979
+add key=OLSRD_IP list=olsrd value=193.238.158.74/32
+add key=OLSRD_LQMULT list=olsrd value="78.41.113.203:1.0 193.238.158.204:1.0 193.238.158.170 1.0"
+add key=OLSRD_STATUS_PLUGIN list=olsrd value=1
+add key=OLSRD_STATUS_PLUGIN_NET list=olsrd value="193.238.156.0/22 78.41.112.0/21 90.152.192.26/32"
+add key=OLSRD_STATUS_PLUGIN_PORT list=olsrd value=80
+add key=OLSRD_TXTINFO_ACCEPT_IP list=olsrd value=0.0.0.0
+add key=vlans list=olsrd value=999,101
+```
+
+Explanation (Router2 variables):
+- `OLSRD_HNA4`: a pair of HNA4 entries (each `ip/mask`) that will be added to the `Hna4` section and their routes installed via `ip route` commands in the init script.
+- `OLSRD_HTTPINFO_ALLOW_NET` and `OLSRD_HTTPINFO_PORT` same purpose as Router1 — control which networks can query `httpinfo` and on which port.
+- `OLSRD_IP=193.238.158.74/32`: main IPv4 address for this container.
+- `OLSRD_LQMULT`: list of link-quality multipliers; note one token appears to be malformed in the sample (`193.238.158.170 1.0` — missing a colon) — the init script accepts either `ip:mult` or `ip mult` forms; both are handled.
+- `OLSRD_STATUS_PLUGIN=1` with `OLSRD_STATUS_PLUGIN_NET` and `OLSRD_STATUS_PLUGIN_PORT=80` — enable status plugin and set its access list and port.
+- `OLSRD_TXTINFO_ACCEPT_IP=0.0.0.0`: allow txtinfo plugin to accept connections from any IPv4 address.
+- `vlans=999,101`: create `eth0.999` and `eth0.101` (no IPs assigned unless further addresses are provided).
+
+Notes
+~~~~~
+
+- These examples are provided as-is for documentation and operator reference. Do not alter the values in this README — use equivalent settings in your RouterOS container env configuration when deploying.
+- When copying tokens into RouterOS `add key=` commands, be mindful of RouterOS quoting rules; ensure values that contain spaces or commas are wrapped in quotes as shown in the examples.
+
+
+
 ## Recent local changes (developer notes)
 
 The local tree includes a few recent, small developer-focused improvements you may find useful when testing or extending the UI:
