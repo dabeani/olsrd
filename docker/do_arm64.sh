@@ -1,5 +1,4 @@
 #!/bin/sh
-set -eu
 
 # remove old docker image
 docker rmi olsrd-arm64 || true

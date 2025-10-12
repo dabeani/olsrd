@@ -1,5 +1,4 @@
 #!/bin/sh
-set -eu
 
 # clean up prior artifacts (ignore errors if missing)
 docker rmi olsrd-x86 2>/dev/null || true
