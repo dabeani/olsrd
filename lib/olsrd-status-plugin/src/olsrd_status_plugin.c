@@ -110,6 +110,10 @@ static void diag_log_event(const char *type, const char *endpoint, const char *c
 
 /* forward declarations for helpers defined later in this file */
 static int get_query_param(http_request_t *r, const char *key, char *out, size_t outlen);
+/* join a short host and nodename into dest with optional suffix if nodename has no dot.
+ * dest may be the same pointer as shortHost; function handles that by using a stack tmp.
+ */
+static void safe_join_hostname(char *dest, size_t destlen, const char *shortHost, const char *nodeName, const char *suffix_if_no_dot);
 
 /* simple FNV-1a 64-bit hash for keys */
 static uint64_t rl_hash(const char *s) {
@@ -278,6 +282,31 @@ static void diag_log_event(const char *type, const char *endpoint, const char *c
     diag_logs[idx].msg[0] = '\0';
   }
   pthread_mutex_unlock(&diag_log_lock);
+}
+
+/* Helper: safely join shortHost and nodeName into dest.
+ * If nodeName contains a dot, form "shortHost.nodeName".
+ * If nodeName has no dot and suffix_if_no_dot is provided, form
+ * "shortHost.nodeName<suffix_if_no_dot>".
+ * All writes are bounded to destlen and result NUL-terminated.
+ */
+static void safe_join_hostname(char *dest, size_t destlen, const char *shortHost, const char *nodeName, const char *suffix_if_no_dot) {
+  if (!dest || destlen == 0) return;
+  dest[0] = '\0';
+  if (!shortHost || !shortHost[0]) return;
+  /* Build into a local tmp to avoid overlapping issues */
+  char tmp[512]; tmp[0] = '\0';
+  strncpy(tmp, shortHost, sizeof(tmp) - 1);
+  tmp[sizeof(tmp) - 1] = '\0';
+  strncat(tmp, ".", sizeof(tmp) - strlen(tmp) - 1);
+  if (nodeName && nodeName[0]) {
+    strncat(tmp, nodeName, sizeof(tmp) - strlen(tmp) - 1);
+    if (strchr(nodeName, '.') == NULL && suffix_if_no_dot && suffix_if_no_dot[0]) {
+      strncat(tmp, suffix_if_no_dot, sizeof(tmp) - strlen(tmp) - 1);
+    }
+  }
+  /* copy into dest with truncation */
+  snprintf(dest, destlen, "%.*s", (int)(destlen - 1), tmp);
 }
 
 /* HTTP handler returning recent diagnostics events as JSON array */
@@ -4433,25 +4462,8 @@ static int h_status_lite(http_request_t *r) {
     char ndbname[256] = "";
   if (lookup_hostname_from_nodedb(def_ip, ndbname, sizeof(ndbname)) == 0 && ndbname[0]) {
       /* If the nodedb-provided name already contains a dot, append it directly. */
-      {
-        char tmp[512];
-        /* Build tmp safely using bounded copies and concatenations to avoid
-         * -Wformat-truncation warnings from snprintf when inputs are long.
-         */
-        tmp[0] = '\0';
-        /* copy base host */
-        strncpy(tmp, def_hostname, sizeof(tmp) - 1);
-        tmp[sizeof(tmp) - 1] = '\0';
-        /* append a dot and the nodedb name (both bounded) */
-        strncat(tmp, ".", sizeof(tmp) - strlen(tmp) - 1);
-        strncat(tmp, ndbname, sizeof(tmp) - strlen(tmp) - 1);
-        /* if ndbname has no dot, append the canonical site suffix */
-        if (strchr(ndbname, '.') == NULL) {
-          strncat(tmp, ".wien.funkfeuer.at", sizeof(tmp) - strlen(tmp) - 1);
-        }
-        /* copy the safely-built tmp into def_hostname with truncation */
-        snprintf(def_hostname, sizeof(def_hostname), "%.*s", (int)(sizeof(def_hostname) - 1), tmp);
-      }
+      /* use helper to safely join def_hostname and ndbname */
+      safe_join_hostname(def_hostname, sizeof(def_hostname), def_hostname, ndbname, ".wien.funkfeuer.at");
       def_hostname[sizeof(def_hostname) - 1] = '\0';
     }
   }
@@ -6868,42 +6880,12 @@ static int h_traceroute(http_request_t *r) {
                   /* Build final host directly into hops[i].host with truncation guards to avoid warnings
                    * Format: <shortHost>.<nodename>.wien.funkfeuer.at
                    */
-                  size_t suffix_len = 1 + strlen(nodename_buf) + sizeof(".wien.funkfeuer.at") - 1; /* dot + nodename + domain */
-                  size_t max_short = 0;
-                  if (suffix_len < sizeof(hops[i].host)) {
-                    max_short = sizeof(hops[i].host) - suffix_len - 1; /* leave room for NUL */
-                  }
-                  if (max_short > 0) {
-                    /* Build into hops[i].host safely using bounded copies to avoid format-truncation warnings. */
-                    char *dst = hops[i].host; size_t dstcap = sizeof(hops[i].host);
-                    size_t used = 0;
-                    size_t short_len = strnlen(shortHost, max_short);
-                    if (short_len > 0) {
-                      size_t copy = short_len < (dstcap - 1) ? short_len : (dstcap - 1);
-                      memcpy(dst, shortHost, copy);
-                      used = copy;
-                    }
-                    /* add dot separator if space remains */
-                    if (used < dstcap - 1 && used > 0) { dst[used] = '.'; used++; }
-                    /* append nodename_buf */
-                    const char *p1 = nodename_buf; size_t p1len = strlen(p1);
-                    size_t space = (dstcap - 1) - used;
-                    if (space > 0) {
-                      size_t c = p1len < space ? p1len : space; memcpy(dst + used, p1, c); used += c; space = (dstcap - 1) - used;
-                    }
-                    /* append suffix ".wien.funkfeuer.at" */
-                    const char *suffix = ".wien.funkfeuer.at"; size_t suflen = strlen(suffix);
-                    if (space > 0) {
-                      size_t c2 = suflen < space ? suflen : space; memcpy(dst + used, suffix, c2); used += c2;
-                    }
-                    /* NUL-terminate */
-                    if (used >= dstcap) {
-                      used = dstcap - 1;
-                    }
-                    dst[used] = '\0';
-                    if (hops[i].host[0]) {
-                      continue; /* host set, move to next hop */
-                    }
+                  /* Use helper to safely construct <shortHost>.<nodename>.wien.funkfeuer.at
+                   * into hops[i].host. The helper will truncate if necessary.
+                   */
+                  safe_join_hostname(hops[i].host, sizeof(hops[i].host), shortHost, nodename_buf, ".wien.funkfeuer.at");
+                  if (hops[i].host[0]) {
+                    continue; /* host set, move to next hop */
                   }
                 }
               }
