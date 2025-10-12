@@ -1,0 +1,451 @@
+#!/bin/sh
+# Redirect all output to a temp file
+exec > /tmp/olsrd-init-full.log 2>&1
+# Copyright (C) 2021 FreiesNetz.at & Bernhard Marker 2025
+
+echo "Starting OLSRd Docker container for Mikrotik RouterOS..."
+/bin/busybox uname -a
+echo "---"
+
+DOCKER_ASSIGNED_IP=$(ip -4 addr show eth0 | sed -n 's/.*inet \([^ ]*\).*/\1/p')
+
+# --- VLAN setup + OLSRD_IP assignment (POSIX/ash) -----------------------------
+
+# Env:
+#   vlans="100-112,130,140,150"   # ranges and/or comma-separated IDs
+#   INTERFACES="eth11 eth10"      # first = parent iface, rest = extra ifaces
+#   MAX_VLAN_COUNT=4094           # optional; cap number of VLANs
+#   OLSRD_IP="192.0.2.10/32"      # optional; CIDR prefix to assign to target ifaces
+
+add_vlan() {
+  parent="$1"
+  id="$2"
+  sub="${parent}.${id}"
+
+  if [ "$id" -lt 1 ] || [ "$id" -gt 4094 ]; then
+    echo "[vlan] Skipping out-of-range VLAN ID: $id" >&2
+    return 0
+  fi
+
+  if ip link show "$sub" >/dev/null 2>&1; then
+    echo "[vlan] $sub already exists, skipping creation."
+    return 0
+  fi
+
+  echo "[debug] add_vlan: parent=$parent id=$id sub=$sub" | tee /dev/console
+  if ip link add link "$parent" name "$sub" type vlan id "$id" 2>&1 | tee -a /dev/console; then
+    echo "[debug] ip link add succeeded for $sub" | tee /dev/console
+  elif command -v vconfig >/dev/null 2>&1; then
+    echo "[debug] vconfig add $parent $id" | tee /dev/console
+    vconfig add "$parent" "$id" 2>&1 | tee -a /dev/console
+    echo "[debug] vconfig exit code: $?" | tee /dev/console
+  else
+    echo "[vlan] Failed to create $sub (need 'ip link add ... type vlan' or 'vconfig')." | tee /dev/console >&2
+    echo "[debug] Failed to create $sub (no ip link add or vconfig)" | tee /dev/console
+    return 1
+  fi
+
+  ip link set dev "$sub" up 2>/dev/null || true
+  echo "[vlan] Created and up: $sub"
+}
+
+remove_vlan() {
+  sub="$1"
+  if ip link show "$sub" >/dev/null 2>&1; then
+    ip link set dev "$sub" down 2>/dev/null || true
+    ip link delete "$sub" 2>/dev/null || true
+    echo "[vlan] Removed: $sub"
+  fi
+}
+
+update_olsrd_conf_interfaces() {
+  conf="${OLSRD_CONF:-/etc/olsrd/olsrd.conf}"
+  if [ ! -f "$conf" ]; then
+    echo "[olsrd] Config not found at '$conf'. Set OLSRD_CONF or create the file." >&2
+    return 1
+  fi
+
+  if command -v mktemp >/dev/null 2>&1; then
+    cand="$(mktemp /tmp/olsr_ifaces_conf.XXXXXX)" || cand="/tmp/olsr_ifaces_conf.$$"
+    final="$(mktemp /tmp/olsr_ifaces_final.XXXXXX)" || final="/tmp/olsr_ifaces_final.$$"
+  else
+    cand="/tmp/olsr_ifaces_conf.$$"
+    final="/tmp/olsr_ifaces_final.$$"
+  fi
+  : > "$cand"
+
+  if [ -n "${INTERFACES:-}" ]; then
+    for x in $INTERFACES; do printf '%s\n' "$x" >> "$cand"; done
+  elif [ -n "$parent" ]; then
+    printf '%s\n' "$parent" >> "$cand"
+  fi
+
+  if [ -n "$parent" ] && [ -n "${keep_ids:-}" ] && [ -s "$keep_ids" ]; then
+    while IFS=' ' read -r id ip; do
+      [ -n "$id" ] && printf '%s\n' "${parent}.${id}" >> "$cand"
+    done < "$keep_ids"
+  elif [ -n "$parent" ]; then
+    ip -o link show | awk -F': ' '{print $2}' | grep "^${parent}." 2>/dev/null >> "$cand"
+  fi
+
+  : > "$final"
+  for ifc in $(sort -u "$cand" | sed '/^$/d'); do
+    if ip link show "$ifc" >/dev/null 2>&1; then
+      printf '%s\n' "$ifc" >> "$final"
+    else
+      echo "[olsrd] Skipping non-existent iface in conf: $ifc" >&2
+    fi
+  done
+
+  if [ ! -s "$final" ]; then
+    echo "[olsrd] No interfaces to write into olsrd.conf; skipping update." >&2
+    rm -f "$cand" "$final" 2>/dev/null || true
+    return 0
+  fi
+
+  iface_list=$(awk '{printf("\"%s\" ", $0)} END{print ""}' "$final" | sed 's/[[:space:]]*$//')
+
+  cp -f "$conf" "${conf}.bak" 2>/dev/null || true
+
+  awk -v ilist="$iface_list" '
+    BEGIN { inb=0; replaced=0 }
+    {
+      line=$0
+      if (!replaced && line ~ /^[[:space:]]*Interface[[:space:]]*"/) {
+        print "Interface " ilist " { }"
+        replaced=1
+        if (index(line, "}") == 0) { inb=1 }
+        next
+      }
+      if (inb) {
+        if (index(line, "}") > 0) { inb=0 }
+        next
+      }
+      if (!replaced && line ~ /^[[:space:]]*InterfaceDefaults/) {
+        print "Interface " ilist " { }"
+        replaced=1
+      }
+      print line
+    }
+    END {
+      if (!replaced) {
+        print ""
+        print "Interface " ilist " { }"
+      }
+    }
+  ' "$conf" > "${conf}.tmp" && mv "${conf}.tmp" "$conf"
+
+  rm -f "$cand" "$final" 2>/dev/null || true
+  echo "[olsrd] Wrote single-line Interface block in $conf"
+}
+
+setup_vlans() {
+  vlans_str="${vlans:-}"
+
+  if [ -n "${INTERFACES:-}" ]; then
+    set -- $INTERFACES
+    parent="$1"
+    shift
+    extra_ifaces="$*"
+  else
+    # Auto-detect main ethernet interface (not VLAN)
+    parent=""
+    for iface in $(ip -o link show | awk -F': ' '{print $2}' | grep -E '^eth[0-9]+$'); do
+      parent="$iface"
+      break
+    done
+    extra_ifaces=""
+  fi
+
+  if [ -z "$vlans_str" ]; then
+    echo "[vlan] No 'vlans' env set; removing ALL VLAN subinterfaces."
+    if [ -n "$parent" ]; then
+      for link in $(ip -o link show | awk -F': ' '{print $2}' | grep "^${parent}\."); do
+        remove_vlan "$link"
+      done
+    fi
+    return 0
+  fi
+
+  if [ -z "$parent" ]; then
+    echo "[vlan] Could not determine parent interface (no INTERFACES and no ethX found). Aborting VLAN setup." >&2
+    return 1
+  fi
+
+  max_count="${MAX_VLAN_COUNT:-4094}"
+
+  if command -v mktemp >/dev/null 2>&1; then
+    tmp_ids="$(mktemp /tmp/vlan_ids.XXXXXX)" || tmp_ids="/tmp/vlan_ids.$$"
+    keep_ids="$(mktemp /tmp/vlan_ids_keep.XXXXXX)" || keep_ids="/tmp/vlan_ids_keep.$$"
+  else
+    tmp_ids="/tmp/vlan_ids.$$"
+    keep_ids="/tmp/vlan_ids_keep.$$"
+  fi
+  : > "$tmp_ids"
+
+  tokens="$(printf '%s' "$vlans_str" | tr -d '[:space:]' | tr ',' ' ')"
+  set -- $tokens
+
+  for token in "$@"; do
+    [ -z "$token" ] && continue
+    # Split VLAN and optional IP (only on first '/')
+    vlan_part="${token%%/*}"
+    ip_part=""
+    [ "$token" != "$vlan_part" ] && ip_part="${token#*/}"
+    # Validate VLAN part is only digits or range
+    case "$vlan_part" in
+      *-*)
+        start="${vlan_part%-*}"
+        end="${vlan_part#*-}"
+        case "$start$end" in
+          *[!0-9]*|'' ) echo "[vlan] Skipping invalid range: '$token'" >&2; continue ;;
+        esac
+        if [ "$start" -gt "$end" ]; then tmp="$start"; start="$end"; end="$tmp"; fi
+        [ "$start" -lt 1 ] && start=1
+        [ "$end" -gt 4094 ] && end=4094
+        i="$start"
+        while [ "$i" -le "$end" ]; do
+          # Only write valid VLAN ID and IP, never with '/'
+          printf '%s %s\n' "$i" "$ip_part" >> "$tmp_ids"
+          i=$((i+1))
+        done
+        ;;
+      *)
+        id="$vlan_part"
+        # Only allow digits
+        case "$id" in
+          *[!0-9]*|'' ) echo "[vlan] Skipping invalid VLAN ID: $id" >&2; continue ;;
+        esac
+        if [ "$id" -ge 1 ] && [ "$id" -le 4094 ]; then
+          # Only write valid VLAN ID and IP, never with '/'
+          printf '%s %s\n' "$id" "$ip_part" >> "$tmp_ids"
+        else
+          echo "[vlan] Skipping out-of-range VLAN ID: $id" >&2
+        fi
+        ;;
+    esac
+  done
+
+  sort -n -u "$tmp_ids" > "$keep_ids"
+  total="$(wc -l < "$keep_ids" | awk '{print $1}')"
+  if [ "$total" -gt "$max_count" ]; then
+    echo "[vlan] Requested $total VLANs; limiting to first $max_count per MAX_VLAN_COUNT." >&2
+    head -n "$max_count" "$keep_ids" > "${keep_ids}.lim" && mv "${keep_ids}.lim" "$keep_ids"
+    total="$max_count"
+  fi
+
+  echo "[vlan] Parent interface: $parent"
+  echo "[vlan] VLANs to keep (count=$total, cap=$max_count): $(awk '{print $1}' "$keep_ids" | tr '\n' ' ')"
+
+  current_vlans="$(ip -o link show | awk -F': ' '{print $2}' | grep "^${parent}." | cut -d. -f2)"
+  for existing_id in $current_vlans; do
+    if ! awk '{print $1}' "$keep_ids" | grep -qx "$existing_id"; then
+      remove_vlan "${parent}.${existing_id}"
+    fi
+  done
+
+  while IFS=' ' read -r id ip; do
+    [ -n "$id" ] && add_vlan "$parent" "$id" || true
+    iface="${parent}.${id}"
+    # If ip is empty, fallback to OLSRD_IP
+    if [ -n "$ip" ]; then
+      ip addr flush dev "$iface" 2>/dev/null || true
+      ip addr add "$ip/24" dev "$iface" 2>/dev/null || true
+      echo "[ip] ${iface}: set $ip/24"
+    elif [ -n "${OLSRD_IP:-}" ]; then
+      ip addr flush dev "$iface" 2>/dev/null || true
+      ip addr add "$OLSRD_IP" dev "$iface" 2>/dev/null || true
+      echo "[ip] ${iface}: set $OLSRD_IP"
+    fi
+  done < "$keep_ids"
+
+  # Per-VLAN IP assignment is already handled above. Assign OLSRD_IP to parent and extra_ifaces if set.
+  if [ -n "${OLSRD_IP:-}" ]; then
+    for IFACE in "$parent" $extra_ifaces; do
+      if ip link show "$IFACE" >/dev/null 2>&1; then
+        ip addr flush dev "$IFACE" 2>/dev/null || true
+        ip addr add "$OLSRD_IP" dev "$IFACE" 2>/dev/null || true
+        echo "[ip] ${IFACE}: set $OLSRD_IP"
+      else
+        echo "[ip] ${IFACE}: interface not found, skipping." >&2
+      fi
+    done
+  else
+    echo "[ip] OLSRD_IP not set; skipping IP assignment."
+  fi
+
+  # Call updater while keep_ids still exists
+  update_olsrd_conf_interfaces
+
+  rm -f "$tmp_ids" "$keep_ids" "${keep_ids}.lim" 2>/dev/null || true
+}
+
+
+# Docker automatically assigns an IP address on eth0 but OLSRd requires the
+# user-wanted IP address to be used as first primary main IP address.
+# So remove the Docker assigned IP and set the user-wanted IP/mask.
+# But because Docker will not start the container without its IP, we have to
+# add it back again later on after setting the user-wanted IP/mask.
+echo "Remove Docker-assigned IP address from eth0."
+ip addr del $DOCKER_ASSIGNED_IP dev eth0
+echo "Add IP $OLSRD_IP from environment variable OLSRD_IP to eth0 as main IP."
+ip addr add $OLSRD_IP dev eth0
+echo "Add Docker-assigned IP address back to eth0 as secondary IP."
+ip addr add $DOCKER_ASSIGNED_IP dev eth0
+echo "Show current configuration of eth0:"
+ip addr show eth0
+
+# Run VLAN + IP + olsrd.conf sync
+setup_vlans
+
+
+echo -n "Checking LQMult environment variable OLSRD_LQMULT ... "
+if [ -n "$OLSRD_LQMULT" ]; then
+  echo $OLSRD_LQMULT
+  echo -n "Adding LQMult entries to olsrd.conf ... "
+  # syntax: OLSRD_LQMULT="1.1.1.1:0.1 2.2.2.2:0.2 3.3.3.3:0.3"
+  sed -i "/^LinkQualityMult.*/d" /etc/olsrd/olsrd.conf
+  for i in $OLSRD_LQMULT; do
+    i="$(echo $i | sed 's/:/ /')"
+    sed -i "s/InterfaceDefaults {/InterfaceDefaults {\nLinkQualityMult $i/" /etc/olsrd/olsrd.conf
+  done
+  echo "done."
+else
+  echo "none set."
+fi
+
+echo -n "Checking Hna4 environment variable OLSRD_HNA4 ... "
+if [ -n "$OLSRD_HNA4" ]; then
+  echo "$OLSRD_HNA4"
+  echo -n "Adding Hna4 entries to olsrd.conf ... "
+
+  # Reset Hna4 block
+  sed -i "/^Hna4 {/,/}/c\\Hna4 {\n}" /etc/olsrd/olsrd.conf
+
+  for entry in $OLSRD_HNA4; do
+    ip="$(echo "$entry" | /bin/busybox cut -d'/' -f1)"
+    mask="$(echo "$entry" | /bin/busybox cut -d'/' -f2)"
+    iface="$(echo "$entry" | /bin/busybox cut -d'/' -f3)"
+
+    # Fallback iface if not provided (use parent from earlier or eth0)
+    if [ -z "$iface" ]; then
+      if [ -n "${INTERFACES:-}" ]; then
+        set -- $INTERFACES
+        iface="$1"
+      elif [ -n "${parent:-}" ]; then
+        iface="$parent"
+      else
+        iface="eth0"
+      fi
+    fi
+
+    # Add kernel route via the specified interface (replace if exists)
+    if ip link show "$iface" >/dev/null 2>&1; then
+      if ip route replace "$ip" dev "$iface" 2>/dev/null; then
+        :
+      else
+        ip route add "$ip" dev "$iface" 2>/dev/null || true
+      fi
+      echo "[hna4] route $ip via $iface"
+    else
+      echo "[hna4] WARNING: interface $iface not found, skipping route for $ip" >&2
+    fi
+
+    # Write Hna4 line (only IP and NETMASK) into olsrd.conf
+    sed -i "s/^Hna4 {/Hna4 {\n$ip $mask/" /etc/olsrd/olsrd.conf
+  done
+  echo "done."
+else
+  echo "none set."
+fi
+
+echo -n "Checking HTTPinfo plugin environment variable OLSRD_HTTPINFO_PORT ... "
+if [ -n "$OLSRD_HTTPINFO_PORT" ]; then
+  echo $OLSRD_HTTPINFO_PORT
+  echo -n "Setting HTTPinfo plugin port in olsrd.conf ... "
+  # syntax: OLSRD_HTTPINFO_PORT='1978'
+  sed -i '/.*LoadPlugin.*olsrd_httpinfo/,/}/ s/^\([[:space:]]*\).*PlParam.*port.*/\1PlParam "port" "'"$OLSRD_HTTPINFO_PORT"'"/I' /etc/olsrd/olsrd.conf
+  echo "done."
+else
+  echo "none set, default: 1978"
+fi
+echo -n "Checking HTTPinfo plugin environment variable OLSRD_HTTPINFO_ALLOW_NET ... "
+if [ -n "$OLSRD_HTTPINFO_ALLOW_NET" ]; then
+  echo $OLSRD_HTTPINFO_ALLOW_NET
+  echo -n "Setting HTTPinfo plugin allowed Nets in olsrd.conf ... "
+  # syntax: OLSRD_HTTPINFO_ALLOW_NET='192.168.0.0/255.255.255.0 10.0.0.0/255.0.0.0'
+  
+  # Remove existing Net entries within the olsrd_httpinfo plugin section
+  sed -i '/.*LoadPlugin.*olsrd_httpinfo/,/}/ s/^[[:space:]]*PlParam "Net".*//' /etc/olsrd/olsrd.conf
+  
+  # Add the new Nets from the environment variable
+  for net in $OLSRD_HTTPINFO_ALLOW_NET; do
+    ip="$(echo $net | cut -d'/' -f1)"
+    mask="$(echo $net | cut -d'/' -f2)"
+    formatted_net="$ip $mask"
+    sed -i "/.*LoadPlugin.*olsrd_httpinfo/a\    PlParam \"Net\" \"$formatted_net\"" /etc/olsrd/olsrd.conf
+  done
+  echo "done."
+else
+  echo "none set, default: 0.0.0.0/255.255.255.0"
+fi
+
+echo -n "Checking TXTinfo plugin environment variable OLSRD_TXTINFO_PORT ... "
+if [ -n "$OLSRD_TXTINFO_PORT" ]; then
+  echo $OLSRD_TXTINFO_PORT
+  echo -n "Setting TXTinfo plugin port in olsrd.conf ... "
+  # syntax: OLSRD_TXTINFO_PORT='2006'
+  sed -i '/.*LoadPlugin.*olsrd_txtinfo/,/}/ s/^\([[:space:]]*\).*PlParam.*port.*/\1PlParam "port" "'"$OLSRD_TXTINFO_PORT"'"/I' /etc/olsrd/olsrd.conf
+  echo "done."
+else
+  echo "none set, default: 2006"
+fi
+echo -n "Checking TXTinfo plugin environment variable OLSRD_TXTINFO_ACCEPT_IP ... "
+if [ -n "$OLSRD_TXTINFO_ACCEPT_IP" ]; then
+  echo $OLSRD_TXTINFO_ACCEPT_IP
+  echo -n "Setting TXTinfo plugin accepted IP in olsrd.conf ... "
+  # syntax: OLSRD_TXTINFO_ACCEPT_IP='127.0.0.1'
+  sed -i '/.*LoadPlugin.*olsrd_txtinfo/,/}/ s/^\([[:space:]]*\).*PlParam.*accept.*/\1PlParam "accept" "'"$OLSRD_TXTINFO_ACCEPT_IP"'"/I' /etc/olsrd/olsrd.conf
+  echo "done."
+else
+  echo "none set, default: 127.0.0.1"
+fi
+
+echo -n "Checking JSONinfo plugin environment variable OLSRD_JSONINFO_PORT ... "
+if [ -n "$OLSRD_JSONINFO_PORT" ]; then
+  echo $OLSRD_JSONINFO_PORT
+  echo -n "Setting JSONinfo plugin port in olsrd.conf ... "
+  # syntax: OLSRD_JSONINFO_PORT='9090'
+  sed -i '/.*LoadPlugin.*olsrd_jsoninfo/,/}/ s/^\([[:space:]]*\).*PlParam.*port.*/\1PlParam "port" "'"$OLSRD_JSONINFO_PORT"'"/I' /etc/olsrd/olsrd.conf
+  echo "done."
+else
+  echo "none set, default: 9090"
+fi
+echo -n "Checking JSONinfo plugin environment variable OLSRD_JSONINFO_ACCEPT_IP ... "
+if [ -n "$OLSRD_JSONINFO_ACCEPT_IP" ]; then
+  echo $OLSRD_JSONINFO_ACCEPT_IP
+  echo -n "Setting JSONinfo plugin accepted IP in olsrd.conf ... "
+  # syntax: OLSRD_JSONINFO_ACCEPT_IP='127.0.0.1'
+  sed -i '/.*LoadPlugin.*olsrd_jsoninfo/,/}/ s/^\([[:space:]]*\).*PlParam.*accept.*/\1PlParam "accept" "'"$OLSRD_JSONINFO_ACCEPT_IP"'"/I' /etc/olsrd/olsrd.conf
+  echo "done."
+else
+  echo "none set, default: 127.0.0.1"
+fi
+
+echo -n "Checking socat environment variable SOCAT_TUNNELS ... "
+if [ -n "$SOCAT_TUNNELS" ]; then
+  echo $SOCAT_TUNNELS
+  for tunnel in $SOCAT_TUNNELS; do
+    listenport=$(echo $tunnel | /bin/busybox cut -d: -f1)
+    destination=$(echo $tunnel | /bin/busybox cut -d: -f2)
+    dstport=$(echo $tunnel | /bin/busybox cut -d: -f3)
+    echo -n "Running tunnel from listen-port $listenport to destination $destination:$dstport ... "
+    /usr/bin/socat TCP-LISTEN:$listenport,fork TCP:$destination:$dstport &
+    echo "done."
+  done
+else
+  echo 'none set (example: "22:172.17.0.1:22 80:172.17.0.1:80 8291:172.17.0.1:8291" ).'
+fi
+
+echo "Running OLSR daemon ..."
+/usr/sbin/olsrd -nofork
