@@ -12,6 +12,7 @@ export CC=arm-linux-gcc
 export CXX=arm-linux-g++
 export LD=arm-linux-ld
 export AR=arm-linux-ar
+export STRIP=arm-linux-strip
 
 # remove old output for ARCH
 rm -rf /olsrd-output/$ARCH
