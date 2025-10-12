@@ -59,6 +59,9 @@ CURL_INSTALL="$BUILD_EXTERNAL_DIR/install/curl"
 export RANLIB=${RANLIB:-arm-linux-ranlib}
 export STRIP=${STRIP:-arm-linux-strip}
 
+# determine parallel jobs (portable fallback)
+JOBS=$(nproc 2>/dev/null || awk -F: '/^processor/{c++}END{print c+0}' /proc/cpuinfo 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+
 mkdir -p "$BUILD_EXTERNAL_DIR"
 mkdir -p "$EXTERNAL_DIR"
 
@@ -91,38 +94,54 @@ echo "[info] Building mbedTLS and static curl for $ARCH (this may take a while)"
 
 # Build mbedTLS (prefer cmake if available, fallback to Makefile)
 pushd "$MBEDTLS_DIR" >/dev/null || exit 1
-if command -v cmake >/dev/null 2>&1; then
-	mkdir -p build && cd build
-	CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="-Os -fPIC" \
-		cmake -DENABLE_TESTING=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_INSTALL_PREFIX="$MBEDTLS_INSTALL" ..
-	make -j$(sysctl -n hw.ncpu)
-	make install
-	cd ..
+if command -v cmake >/dev/null 2>&1 && [ -f "$MBEDTLS_DIR/CMakeLists.txt" ]; then
+  mkdir -p "$MBEDTLS_DIR/build"
+  CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="-Os -fPIC" \
+    cmake -S "$MBEDTLS_DIR" -B "$MBEDTLS_DIR/build" -DENABLE_TESTING=OFF -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_INSTALL_PREFIX="$MBEDTLS_INSTALL"
+  cmake --build "$MBEDTLS_DIR/build" --target install -- -j"$JOBS"
 else
-	# fallback: use bundled make rules
-	make SHARED=0 CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="-Os -fPIC" -j$(sysctl -n hw.ncpu)
-	mkdir -p "$MBEDTLS_INSTALL"/lib "$MBEDTLS_INSTALL"/include
-	# copy static libs and public headers
-	cp library/libmbedtls.a "$MBEDTLS_INSTALL"/lib/ || true
-	cp library/libmbedx509.a "$MBEDTLS_INSTALL"/lib/ || true
-	cp library/libmbedcrypto.a "$MBEDTLS_INSTALL"/lib/ || true
-	cp -r include/mbedtls "$MBEDTLS_INSTALL"/include/ || true
+  # fallback: use bundled make rules
+  make SHARED=0 CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="-Os -fPIC" -j"$JOBS"
+  mkdir -p "$MBEDTLS_INSTALL"/lib "$MBEDTLS_INSTALL"/include
+  # copy static libs and public headers
+  cp library/libmbedtls.a "$MBEDTLS_INSTALL"/lib/ || true
+  cp library/libmbedx509.a "$MBEDTLS_INSTALL"/lib/ || true
+  cp library/libmbedcrypto.a "$MBEDTLS_INSTALL"/lib/ || true
+  cp -r include/mbedtls "$MBEDTLS_INSTALL"/include/ || true
 fi
 popd >/dev/null
 
 # Build curl statically and link against the built mbedTLS
 pushd "$CURL_DIR" >/dev/null || exit 1
 
-./buildconf
-PKG_CONFIG_PATH= \
-CC=$CC AR=$AR RANLIB=$RANLIB \
-./configure --host=arm-linux --disable-shared --enable-static \
-	--with-mbedtls="$MBEDTLS_INSTALL" \
-	--without-ssl --without-zlib --without-libidn2 --without-nghttp2 --without-brotli --without-libssh2 --without-librtmp \
-	--disable-ldap --disable-rtsp --disable-manual --enable-ipv6=no --prefix="$CURL_INSTALL"
-make -j$(sysctl -n hw.ncpu)
-make install
-popd >/dev/null
+# Some curl checkouts require running buildconf; run it if present
+if [ -x ./buildconf ]; then
+	./buildconf || true
+fi
+
+# Ensure configure exists, otherwise try autoreconf to generate it
+if [ ! -f ./configure ]; then
+	if command -v autoreconf >/dev/null 2>&1; then
+		autoreconf -fi || true
+	else
+		echo "[error] curl source has no configure and autoreconf is not available" >&2
+	fi
+fi
+
+if [ ! -f ./configure ]; then
+	echo "[error] cannot build curl: no configure script available" >&2
+	popd >/dev/null
+else
+	PKG_CONFIG_PATH= \
+	CC=$CC AR=$AR RANLIB=$RANLIB \
+	./configure --host=arm-linux --disable-shared --enable-static \
+			--with-mbedtls="$MBEDTLS_INSTALL" \
+			--without-ssl --without-zlib --without-libidn2 --without-nghttp2 --without-brotli --without-libssh2 --without-librtmp \
+			--disable-ldap --disable-rtsp --disable-manual --enable-ipv6=no --prefix="$CURL_INSTALL"
+	make -j"$JOBS"
+	make install
+	popd >/dev/null
+fi
 
 # copy resulting curl binary into output filesystem
 mkdir -p /olsrd-output/$ARCH/usr/bin
