@@ -1,8 +1,6 @@
 #!/bin/sh
 # Combined OLSRd (IPv4) and OLSRd2 (IPv6) init script for Mikrotik container
 # Copyright (C) 2021-2025 FreiesNetz.at & Bernhard Marker
-
-
 set -eu
 
 # --- Debugging/Logging ---
@@ -15,9 +13,6 @@ fi
 
 echo "Starting Mikrotik OLSRd/OLSRd2 Docker container..."
 /bin/busybox uname -a
-ip addr show
-ip addr
-ifconfig
 cat /proc/net/dev
 echo "Environment variables:"
 env
