@@ -83,6 +83,9 @@ run_make() {
     plugin_args="olsrd httpinfo jsoninfo txtinfo watchdog pgraph netjson olsrd-status-plugin"
   fi
 
+export CFLAGS="-Os -ffunction-sections -fdata-sections -fno-common -g0"
+export LDFLAGS="-Wl,--gc-sections -Wl,--as-needed -s"
+
   # Build with CPU if available
   if [ -n "$cpu_arg" ]; then
     make $plugin_args OS=linux CPU="$cpu_arg" $extra_vars

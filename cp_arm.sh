@@ -35,7 +35,7 @@ echo "[info] Running build with: $BUILD_VARS"
 
 # Build using run_make helper which handles clean and plugin selection.
 # You can override MAKE_PLUGINS in the environment when cross-building to limit plugins.
-run_make $ARCH
+run_make $ARCH 
 
 echo "[info] copying olsrd -> /olsrd-output/$ARCH/usr/sbin/"
 cp olsrd /olsrd-output/$ARCH/usr/sbin/
