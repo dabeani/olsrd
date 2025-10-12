@@ -94,6 +94,27 @@ echo "[info] Building mbedTLS and static curl for $ARCH (this may take a while)"
 
 # Build mbedTLS (prefer cmake if available, fallback to Makefile)
 pushd "$MBEDTLS_DIR" >/dev/null || exit 1
+# Ensure python3 build-time modules required by mbedTLS build scripts are available
+# Some mbedTLS build/test generators use jinja2 and jsonschema. Try to auto-install
+# them if pip3 is present (useful in CI/container builds). If pip is not available,
+# print a clear error advising the user how to install them.
+if command -v python3 >/dev/null 2>&1; then
+	missing=""
+	python3 -c "import jinja2" 2>/dev/null || missing="$missing jinja2"
+	python3 -c "import jsonschema" 2>/dev/null || missing="$missing jsonschema"
+	if [ -n "$missing" ]; then
+		echo "[info] missing python3 packages for mbedTLS build:$missing"
+		if command -v pip3 >/dev/null 2>&1; then
+			echo "[info] attempting to install missing python packages with pip3 (this may require network access)"
+			pip3 install --no-cache-dir $missing || echo "[warn] pip3 install failed; please install: $missing (e.g. apt-get install -y python3-pip && pip3 install jinja2 jsonschema)"
+		elif command -v pip >/dev/null 2>&1; then
+			echo "[info] attempting to install missing python packages with pip"
+			pip install --no-cache-dir $missing || echo "[warn] pip install failed; please install: $missing"
+		else
+			echo "[error] python3 pip is not available; please install python3-pip and the following python packages: $missing" >&2
+		fi
+	fi
+fi
 if command -v cmake >/dev/null 2>&1 && [ -f "$MBEDTLS_DIR/CMakeLists.txt" ]; then
   mkdir -p "$MBEDTLS_DIR/build"
   CC=$CC AR=$AR RANLIB=$RANLIB CFLAGS="-Os -fPIC" \
@@ -132,12 +153,12 @@ if [ ! -f ./configure ]; then
 	echo "[error] cannot build curl: no configure script available" >&2
 	popd >/dev/null
 else
-	PKG_CONFIG_PATH= \
-	CC=$CC AR=$AR RANLIB=$RANLIB \
-	./configure --host=arm-linux --disable-shared --enable-static \
-			--with-mbedtls="$MBEDTLS_INSTALL" \
-			--without-ssl --without-zlib --without-libidn2 --without-nghttp2 --without-brotli --without-libssh2 --without-librtmp \
-			--disable-ldap --disable-rtsp --disable-manual --enable-ipv6=no --prefix="$CURL_INSTALL"
+    PKG_CONFIG_PATH= \
+    CC=$CC AR=$AR RANLIB=$RANLIB \
+    ./configure --host=arm-linux --disable-shared --enable-static \
+	    --with-mbedtls="$MBEDTLS_INSTALL" \
+	    --without-ssl --without-zlib --without-libidn2 --without-libpsl --without-nghttp2 --without-brotli --without-libssh2 --without-librtmp \
+	    --disable-ldap --disable-rtsp --disable-manual --enable-ipv6=no --prefix="$CURL_INSTALL"
 	make -j"$JOBS"
 	make install
 	popd >/dev/null
