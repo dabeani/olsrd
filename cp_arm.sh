@@ -13,6 +13,17 @@ export CXX=arm-linux-g++
 export LD=arm-linux-ld
 export AR=arm-linux-ar
 
+# remove old output for ARCH
+rm -rf /olsrd-output/$ARCH
+
+# create output folders
+mkdir -p /olsrd-output/$ARCH/usr/sbin
+mkdir -p /olsrd-output/$ARCH/usr/lib
+mkdir -p /olsrd-output/$ARCH/usr/share/olsrd-status-plugin
+
+# copy Dockerfile
+cp docker/arm/Dockerfile /olsrd-output/$ARCH/Dockerfile
+
 # Work from the repo root (script may be invoked from docker/container)
 REPO_ROOT=$(cd "$(dirname "$0")" && pwd)
 cd "$REPO_ROOT"

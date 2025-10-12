@@ -7,7 +7,7 @@ rm -f ./olsrd-arm64.tar || true
 
 # refresh init.sh into the build context
 rm -f arm64/init.sh
-cp /home/ubnt/olsrd/docker/init.sh arm64/init.sh
+cp docker/init.sh arm64/init.sh
 
 # add olsrd2 stuff
 rm arm64/usr/sbin/olsrd2*
