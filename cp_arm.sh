@@ -74,10 +74,10 @@ if [ -d "$MBEDTLS_SUBDIR" ]; then
 	echo "[info] using mbedTLS from submodule: $MBEDTLS_SUBDIR"
 	MBEDTLS_DIR="$MBEDTLS_SUBDIR"
 else
-
-if [ -d "$CURL_SUBDIR" ]; then
+	echo "[error] required submodule lib/extern/mbedtls not found. Please run: git submodule update --init --recursive" >&2
 	exit 1
 fi
+
 if [ -d "$CURL_SUBDIR" ]; then
 	echo "[info] using curl from submodule: $CURL_SUBDIR"
 	CURL_DIR="$CURL_SUBDIR"
