@@ -65,11 +65,18 @@ mkdir -p "$EXTERNAL_DIR"
 
 # If submodule directories exist use them directly (recommended workflow with git submodules)
 
+# First-time initialization: if required submodules are not present, attempt to init them once.
+if [ ! -d "$MBEDTLS_SUBDIR" ] || [ ! -d "$CURL_SUBDIR" ]; then
+  echo "[info] One-time init: initializing git submodules (this may take a while)";
+  git submodule update --init --recursive || true
+fi
+
 if [ -d "$MBEDTLS_SUBDIR" ]; then
 	echo "[info] using mbedTLS from submodule: $MBEDTLS_SUBDIR"
 	MBEDTLS_DIR="$MBEDTLS_SUBDIR"
 else
-	echo "[error] required submodule lib/extern/mbedtls not found. Please run: git submodule update --init --recursive" >&2
+
+if [ -d "$CURL_SUBDIR" ]; then
 	exit 1
 fi
 if [ -d "$CURL_SUBDIR" ]; then
