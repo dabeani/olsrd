@@ -294,7 +294,8 @@ generate_olsrd_conf() {
   echo "MprCoverage 5" >> "$conf"
   echo "" >> "$conf"
   iface_list=""
-  for i in $(ls /sys/class/net/ | grep -v '^lo$'); do
+  #for i in $(ls /sys/class/net/ | grep -v '^lo$'); do
+  for i in $(cat /proc/net/dev | grep -v 'Inter-' | grep -v 'packets' | grep -v 'lo' | awk -F: '{print $1}' | tr -d ' '); do
     iface_list="$iface_list \"$i\""
   done
   if [ -n "$iface_list" ]; then
@@ -403,7 +404,7 @@ bindto       -::1/128
 bindto       default_accept
 EOF
 
-  vlan_ifaces="$(ls /sys/class/net/ | grep -E '^'"$BASE_IFACE"'[.][0-9]+$' || true)"
+  vlan_ifaces="$(cat /proc/net/dev | grep -v 'Inter-' | grep -v 'packets' | grep -v 'lo' | awk -F: '{print $1}' | tr -d ' ' | grep -E '^'"$BASE_IFACE"'[.][0-9]+$' || true)"
   if [ -n "$vlan_ifaces" ]; then
     for iface in $vlan_ifaces; do
       cat <<EOL >> /etc/olsrd2/olsrd2.conf
